@@ -1,0 +1,28 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/Users/bretmeraki/Desktop",
+        "/Users/bretmeraki/Downloads", 
+        "/Users/bretmeraki/Documents",
+        "/Users/bretmeraki/claude-mcp-configs",
+        "/Users/bretmeraki/.forest-data"
+      ]
+    },
+    "memory": {
+      "command": "npx",
+      "args": [
+        "-y", 
+        "@modelcontextprotocol/server-memory"
+      ]
+    },
+    "forest": {
+      "command": "node",
+      "args": ["/Users/bretmeraki/claude-mcp-configs/forest-server/server.js"],
+      "cwd": "/Users/bretmeraki/claude-mcp-configs/forest-server"
+    }
+  }
+}

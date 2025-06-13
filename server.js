@@ -486,6 +486,16 @@ class ForestServer {
             }
           },
           {
+            name: 'analyze_complexity_evolution',
+            description: 'Analyze the current complexity tier and scaling opportunities for infinite growth potential',
+            inputSchema: { type: 'object', properties: {} }
+          },
+          {
+            name: 'analyze_identity_transformation',
+            description: 'Analyze current identity and generate micro-shifts toward target professional identity',
+            inputSchema: { type: 'object', properties: {} }
+          },
+          {
             name: 'list_learning_paths',
             description: 'Show all available learning paths in the current project',
             inputSchema: { type: 'object', properties: {} }
@@ -590,6 +600,10 @@ class ForestServer {
             return await this.focusLearningPath(args.path_name, args.duration || 'until next switch');
           case 'list_learning_paths':
             return await this.listLearningPaths();
+          case 'analyze_complexity_evolution':
+            return await this.analyzeComplexityEvolution();
+          case 'analyze_identity_transformation':
+            return await this.analyzeIdentityTransformation();
           case 'analyze_reasoning':
             return await this.analyzeReasoning(args.include_detailed_analysis ?? true);
           default:
@@ -1907,34 +1921,37 @@ class ForestServer {
     const habitBlocks = [];
     const availableSlots = timeSlots.filter(slot => slot.available);
     
-    // Schedule habit building blocks at natural transition times
-    const morningHabitTime = projectConfig.wake_minutes + 30; // 30 min after wake
-    const eveningHabitTime = projectConfig.sleep_minutes - 60; // 1 hour before sleep
-    
-    const habitTimes = [morningHabitTime, eveningHabitTime];
+    // ENHANCED HABIT SCHEDULING: Multiple placement strategies
+    const habitStrategies = this.generateHabitPlacementStrategies(projectConfig, availableSlots.length);
     
     habitNodes.forEach((habit, index) => {
-      if (index < habitTimes.length) {
-        const targetTime = habitTimes[index];
-        const nearestSlot = availableSlots.find(slot => 
-          Math.abs(slot.start - targetTime) < 30 // Within 30 minutes
-        );
+      // Generate microsteps for this habit
+      const microsteps = this.generateHabitMicrosteps(habit);
+      
+      // Place microsteps throughout the day using different strategies
+      microsteps.forEach((microstep, stepIndex) => {
+        const strategy = habitStrategies[stepIndex % habitStrategies.length];
+        const targetSlot = this.findOptimalHabitSlot(availableSlots, strategy, microstep);
         
-        if (nearestSlot) {
+        if (targetSlot) {
           habitBlocks.push({
-            id: habit.id,
-            type: 'habit',
-            time: nearestSlot.formatted_time,
-            duration: '15 min',
-            action: habit.title,
-            description: habit.description,
+            id: `${habit.id}_step_${stepIndex}`,
+            type: 'habit_microstep',
+            time: targetSlot.formatted_time,
+            duration: microstep.duration,
+            action: microstep.action,
+            description: microstep.description,
             habit_type: habit.type,
-            tracking_metrics: habit.tracking_metrics || [],
-            success_criteria: habit.success_criteria
+            microstep_level: microstep.level,
+            parent_habit: habit.id,
+            tracking_metrics: microstep.tracking_metrics || [],
+            success_criteria: microstep.success_criteria,
+            habit_stack: microstep.habit_stack,
+            energy_requirement: microstep.energy_requirement
           });
-          nearestSlot.available = false;
+          targetSlot.available = false;
         }
-      }
+      });
     });
     
     return habitBlocks;
@@ -1945,12 +1962,15 @@ class ForestServer {
     const availableSlots = timeSlots.filter(slot => slot.available);
     const transitionTime = this.parseTimeAvailable(projectConfig.transition_time || '5 minutes');
     
-    // Add breaks between intensive periods
+    // ENHANCED: Add micro-habits during transitions and breaks
     availableSlots.forEach((slot, index) => {
       if (index % 3 === 0 && availableSlots[index + 1]) { // Every 3rd slot
+        // Generate context-appropriate micro-habits for this break
+        const microHabit = this.generateContextualMicroHabit(slot, index, projectConfig);
+        
         structureBlocks.push({
           id: this.generateId(),
-          type: 'break',
+          type: 'break_with_microhabit',
           time: slot.formatted_time,
           duration: '10 min',
           action: 'Restorative Break',
@@ -2525,8 +2545,12 @@ ${pacingContext.pacing_warnings.length > 0 ? `
     const knowledgeLevel = projectConfig.knowledge_level || 0;
     const focusDuration = this.parseTimeAvailable(projectConfig.focus_duration || '25 minutes');
     
+    // 🌟 INFINITE SCALING: Analyze complexity patterns to generate appropriate tasks
+    const complexityAnalysis = this.analyzeComplexityIndicators(learningHistory);
+    const complexityTasks = this.generateComplexityAppropriateTask(complexityAnalysis, projectConfig, learningHistory);
+    
     // Generate domain-agnostic next steps based on what's been completed
-    const newTasks = [];
+    const newTasks = [...complexityTasks];
     
     // Generate micro-tasks for very short focus periods (accessibility support)
     if (focusDuration <= 10) {
@@ -2964,8 +2988,8 @@ ${pacingContext.pacing_warnings.length > 0 ? `
     
     const intelligenceScore = (patterns * 0.3) + (chains * 0.4) + (implications * 0.3);
     
-    if (intelligenceScore >= 3) return 'high';
-    if (intelligenceScore >= 2) return 'medium';
+    if (intelligenceScore >= 2) return 'high';
+    if (intelligenceScore >= 1) return 'medium';
     return 'developing';
   }
   
@@ -4315,11 +4339,769 @@ ${pacingContext.pacing_warnings.length > 0 ? `
       throw err; // Upstream catch will trigger fallback
     }
   }
+
+  // ========================================
+  // 🌟 INFINITE SCALING COMPLEXITY ENGINE
+  // ========================================
+
+  // COMPLEXITY DETECTION ENGINE - Recognizes when user is ready for higher complexity
+  analyzeComplexityIndicators(learningHistory, completionContext = {}) {
+    const recentCompletions = learningHistory.completed_topics?.slice(-10) || [];
+    const indicators = {
+      
+      // FINANCIAL COMPLEXITY DETECTION
+      financial_tracking: {
+        level: 0,
+        signals: [],
+        detected: false
+      },
+      
+      // PEOPLE COORDINATION COMPLEXITY
+      people_coordination: {
+        level: 0,
+        signals: [],
+        detected: false
+      },
+      
+      // TIME HORIZON COMPLEXITY  
+      time_horizons: {
+        level: 0,
+        signals: [],
+        detected: false
+      },
+      
+      // DECISION WEIGHT COMPLEXITY
+      decision_weight: {
+        level: 0,
+        signals: [],
+        detected: false
+      },
+      
+      // STRATEGIC THINKING COMPLEXITY
+      strategic_thinking: {
+        level: 0,
+        signals: [],
+        detected: false
+      }
+    };
+    
+    // ANALYZE FINANCIAL COMPLEXITY PATTERNS
+    recentCompletions.forEach(completion => {
+      const content = (completion.topic + ' ' + (completion.learned || '') + ' ' + (completion.outcome || '')).toLowerCase();
+      
+      // Financial indicators
+      if (content.match(/\$[\d,]+|revenue|profit|cost|budget|pricing|sales|income|expense/)) {
+        indicators.financial_tracking.signals.push(completion.topic);
+        if (content.match(/\$[\d,]{4,}|revenue.*\d+k|profit.*\d+/)) {
+          indicators.financial_tracking.level = Math.max(indicators.financial_tracking.level, 2);
+        } else {
+          indicators.financial_tracking.level = Math.max(indicators.financial_tracking.level, 1);
+        }
+      }
+      
+      // People coordination indicators
+      if (content.match(/team|people|coordinate|manage|lead|delegate|hire|meeting|collaborate|staff/)) {
+        indicators.people_coordination.signals.push(completion.topic);
+        if (content.match(/hire|staff|manage.*team|lead.*people/)) {
+          indicators.people_coordination.level = Math.max(indicators.people_coordination.level, 2);
+        } else {
+          indicators.people_coordination.level = Math.max(indicators.people_coordination.level, 1);
+        }
+      }
+      
+      // Time horizon indicators
+      if (content.match(/quarter|year|long.?term|strategy|plan.*month|roadmap|vision/)) {
+        indicators.time_horizons.signals.push(completion.topic);
+        if (content.match(/year|quarterly|annual|long.?term.*strategy/)) {
+          indicators.time_horizons.level = Math.max(indicators.time_horizons.level, 2);
+        } else {
+          indicators.time_horizons.level = Math.max(indicators.time_horizons.level, 1);
+        }
+      }
+      
+      // Decision weight indicators  
+      if (content.match(/decision|choose|strategy|invest|acquire|partner|contract|legal/)) {
+        indicators.decision_weight.signals.push(completion.topic);
+        if (content.match(/invest|acquire|partner.*company|legal.*contract|strategic.*decision/)) {
+          indicators.decision_weight.level = Math.max(indicators.decision_weight.level, 2);
+        } else {
+          indicators.decision_weight.level = Math.max(indicators.decision_weight.level, 1);
+        }
+      }
+      
+      // Strategic thinking indicators
+      if (content.match(/market|competition|industry|scale|growth|expansion|opportunity/)) {
+        indicators.strategic_thinking.signals.push(completion.topic);
+        if (content.match(/market.*analysis|industry.*trends|scale.*operation|growth.*strategy/)) {
+          indicators.strategic_thinking.level = Math.max(indicators.strategic_thinking.level, 2);
+        } else {
+          indicators.strategic_thinking.level = Math.max(indicators.strategic_thinking.level, 1);
+        }
+      }
+    });
+    
+    // DETERMINE DETECTION STATUS
+    Object.keys(indicators).forEach(key => {
+      indicators[key].detected = indicators[key].level > 0;
+    });
+    
+    // CALCULATE OVERALL COMPLEXITY LEVEL
+    const totalComplexity = Object.values(indicators).reduce((sum, indicator) => sum + indicator.level, 0);
+    const activeIndicators = Object.values(indicators).filter(indicator => indicator.detected).length;
+    
+    return {
+      indicators,
+      overall_complexity_level: totalComplexity,
+      active_complexity_domains: activeIndicators,
+      ready_for_scaling: totalComplexity >= 3 && activeIndicators >= 2,
+      complexity_tier: this.determineComplexityTier(totalComplexity, activeIndicators)
+    };
+  }
+
+  // COMPLEXITY TIER DETERMINATION
+  determineComplexityTier(totalComplexity, activeIndicators) {
+    if (totalComplexity === 0) return 'individual'; // Personal tasks only
+    if (totalComplexity <= 3 && activeIndicators <= 2) return 'coordination'; // Basic coordination
+    if (totalComplexity <= 6 && activeIndicators <= 3) return 'management'; // Multi-domain management  
+    if (totalComplexity <= 10 && activeIndicators <= 4) return 'strategic'; // Strategic operations
+    return 'enterprise'; // Full enterprise complexity
+  }
+
+  // PATTERN-BASED TASK SCALING
+  generateComplexityAppropriateTask(complexityAnalysis, projectConfig, learningHistory) {
+    const { complexity_tier, indicators } = complexityAnalysis;
+    const tasks = [];
+    
+    // GENERATE TASKS BASED ON DETECTED COMPLEXITY PATTERNS
+    if (indicators.financial_tracking.detected && indicators.financial_tracking.level >= 1) {
+      if (complexity_tier === 'coordination') {
+        tasks.push({
+          id: this.generateId(),
+          title: 'Track Weekly Revenue Patterns',
+          description: 'Monitor and analyze your weekly revenue trends to identify growth opportunities',
+          complexity_level: 'coordination',
+          estimated_time: '30 minutes',
+          magnitude: 5,
+          prerequisites: [],
+          branch_type: 'financial_intelligence',
+          generated_from: 'financial_complexity_detection'
+        });
+      } else if (complexity_tier === 'strategic') {
+        tasks.push({
+          id: this.generateId(),
+          title: 'Develop Financial Forecasting Model',
+          description: 'Create systematic approach to predicting and planning financial growth',
+          complexity_level: 'strategic',
+          estimated_time: '2 hours',
+          magnitude: 7,
+          prerequisites: [],
+          branch_type: 'strategic_planning',
+          generated_from: 'financial_complexity_scaling'
+        });
+      }
+    }
+    
+    if (indicators.people_coordination.detected && indicators.people_coordination.level >= 1) {
+      if (complexity_tier === 'coordination') {
+        tasks.push({
+          id: this.generateId(),
+          title: 'Establish Team Communication Rhythm',
+          description: 'Create systematic approach to coordinating with people in your network',
+          complexity_level: 'coordination', 
+          estimated_time: '45 minutes',
+          magnitude: 6,
+          prerequisites: [],
+          branch_type: 'coordination_systems',
+          generated_from: 'people_complexity_detection'
+        });
+      } else if (complexity_tier === 'strategic') {
+        tasks.push({
+          id: this.generateId(),
+          title: 'Design Organizational Structure',
+          description: 'Plan how to scale team coordination as your operation grows',
+          complexity_level: 'strategic',
+          estimated_time: '1.5 hours', 
+          magnitude: 8,
+          prerequisites: [],
+          branch_type: 'organizational_design',
+          generated_from: 'people_complexity_scaling'
+        });
+      }
+    }
+    
+    if (indicators.strategic_thinking.detected && complexity_tier === 'strategic') {
+      tasks.push({
+        id: this.generateId(),
+        title: 'Market Positioning Analysis',
+        description: 'Analyze your position in the broader market and identify strategic opportunities',
+        complexity_level: 'strategic',
+        estimated_time: '2 hours',
+        magnitude: 8,
+        prerequisites: [],
+        branch_type: 'market_intelligence',
+        generated_from: 'strategic_complexity_detection'
+      });
+    }
+    
+    return tasks;
+  }
+
+  // COMPLEXITY EVOLUTION ANALYSIS TOOL
+  async analyzeComplexityEvolution() {
+    const projectId = await this.requireActiveProject();
+    const projectConfig = await this.loadProjectData(projectId, 'config.json');
+    const learningHistory = await this.loadProjectData(projectId, 'learning_history.json') || { completed_topics: [] };
+    
+    // Run complexity analysis
+    const complexityAnalysis = this.analyzeComplexityIndicators(learningHistory);
+    const { indicators, overall_complexity_level, active_complexity_domains, ready_for_scaling, complexity_tier } = complexityAnalysis;
+    
+    // Generate scaling opportunities
+    const scalingTasks = this.generateComplexityAppropriateTask(complexityAnalysis, projectConfig, learningHistory);
+    
+    let analysis = `🌟 INFINITE SCALING COMPLEXITY ANALYSIS for "${projectConfig.goal}"\\n\\n`;
+    
+    // Current complexity tier
+    analysis += `🎯 CURRENT COMPLEXITY TIER: ${complexity_tier.toUpperCase()}\\n`;
+    analysis += `📊 Overall Complexity Level: ${overall_complexity_level}\\n`;
+    analysis += `🔥 Active Domains: ${active_complexity_domains}/5\\n`;
+    analysis += `🚀 Ready for Scaling: ${ready_for_scaling ? 'YES' : 'Not yet'}\\n\\n`;
+    
+    // Domain analysis
+    analysis += `🧠 COMPLEXITY DOMAIN ANALYSIS:\\n`;
+    Object.entries(indicators).forEach(([domain, data]) => {
+      const status = data.detected ? `ACTIVE (Level ${data.level})` : 'Not detected';
+      const emoji = data.detected ? '✅' : '⚪';
+      analysis += `${emoji} ${domain.replace(/_/g, ' ').toUpperCase()}: ${status}\\n`;
+      if (data.signals.length > 0) {
+        analysis += `   Signals: ${data.signals.slice(-3).join(', ')}\\n`;
+      }
+    });
+    
+    // Scaling opportunities
+    analysis += `\\n🎯 SCALING OPPORTUNITIES DETECTED:\\n`;
+    if (scalingTasks.length > 0) {
+      scalingTasks.forEach((task, index) => {
+        analysis += `${index + 1}. ${task.title} (${task.complexity_level})\\n`;
+        analysis += `   Generated from: ${task.generated_from}\\n`;
+        analysis += `   Duration: ${task.estimated_time}\\n\\n`;
+      });
+    } else {
+      analysis += `No scaling opportunities detected yet. Continue current path to reveal complexity patterns.\\n\\n`;
+    }
+    
+    // Growth pathway explanation
+    analysis += `🌉 SCALING PATHWAY:\\n`;
+    const pathways = {
+      individual: 'Personal tasks and skill building',
+      coordination: 'Basic coordination and simple financial tracking',
+      management: 'Multi-domain management and team coordination',
+      strategic: 'Strategic operations and market positioning',
+      enterprise: 'Full enterprise complexity orchestration'
+    };
+    
+    const tierOrder = ['individual', 'coordination', 'management', 'strategic', 'enterprise'];
+    const currentIndex = tierOrder.indexOf(complexity_tier);
+    
+    tierOrder.forEach((tier, index) => {
+      const emoji = index < currentIndex ? '✅' : index === currentIndex ? '🔥' : '⚪';
+      const status = index === currentIndex ? ' ← CURRENT' : '';
+      analysis += `${emoji} ${tier.toUpperCase()}: ${pathways[tier]}${status}\\n`;
+    });
+    
+    analysis += `\\n💫 The same system that orchestrates your current "${complexity_tier}" tasks will seamlessly scale to enterprise complexity without you ever outgrowing it!`;
+    
+    return {
+      content: [{
+        type: 'text',
+        text: analysis
+      }]
+    };
+  }
+
+  // IDENTITY-BASED TRANSFORMATION ENGINE
+  // Facilitates becoming the type of person who naturally belongs at the end goal
+
+  analyzeCurrentIdentity(projectConfig, learningHistory, dailyPatterns = {}) {
+    const completedTopics = learningHistory.completed_topics || [];
+    const recentActivity = completedTopics.slice(-10);
+    
+    // Analyze current identity markers
+    const currentIdentity = {
+      daily_routines: this.assessDailyRoutines(recentActivity, dailyPatterns),
+      social_circles: this.assessSocialCircles(recentActivity),
+      language_patterns: this.assessLanguagePatterns(recentActivity),
+      environment_cues: this.assessEnvironment(recentActivity),
+      decision_patterns: this.assessDecisionPatterns(recentActivity),
+      professional_habits: this.assessProfessionalHabits(recentActivity),
+      learning_orientation: this.assessLearningOrientation(recentActivity),
+      network_engagement: this.assessNetworkEngagement(recentActivity),
+      industry_immersion: this.assessIndustryImmersion(recentActivity)
+    };
+    
+    return {
+      identity_snapshot: currentIdentity,
+      identity_strength: this.calculateIdentityStrength(currentIdentity),
+      transformation_readiness: this.assessTransformationReadiness(currentIdentity)
+    };
+  }
+
+  assessDailyRoutines(recentActivity, dailyPatterns) {
+    const routineKeywords = recentActivity.filter(activity => {
+      const content = (activity.topic + ' ' + (activity.learned || '')).toLowerCase();
+      return content.match(/routine|morning|daily|habit|schedule|practice/);
+    });
+    
+    if (routineKeywords.length === 0) {
+      return { status: 'consumer_oriented', evidence: 'No professional routine development detected' };
+    } else if (routineKeywords.length <= 2) {
+      return { status: 'transitioning', evidence: 'Some routine optimization beginning' };
+    } else {
+      return { status: 'professional_oriented', evidence: 'Consistent professional routine development' };
+    }
+  }
+
+  assessSocialCircles(recentActivity) {
+    const socialActivity = recentActivity.filter(activity => {
+      const content = (activity.topic + ' ' + (activity.learned || '')).toLowerCase();
+      return content.match(/network|connect|people|professional|industry|contact|relationship|community/);
+    });
+    
+    if (socialActivity.length === 0) {
+      return { status: 'isolated', evidence: 'No professional networking detected' };
+    } else if (socialActivity.length <= 2) {
+      return { status: 'emerging', evidence: 'Early networking attempts' };
+    } else {
+      return { status: 'connected', evidence: 'Active professional network building' };
+    }
+  }
+
+  assessLanguagePatterns(recentActivity) {
+    const industryLanguage = recentActivity.filter(activity => {
+      const content = (activity.topic + ' ' + (activity.learned || '')).toLowerCase();
+      return content.match(/industry|professional|development|production|creative|strategic|business/);
+    });
+    
+    if (industryLanguage.length === 0) {
+      return { status: 'fan_language', evidence: 'Consumer/fan perspective dominant' };
+    } else if (industryLanguage.length <= 3) {
+      return { status: 'mixed_language', evidence: 'Beginning to adopt professional terminology' };
+    } else {
+      return { status: 'professional_language', evidence: 'Consistent industry terminology usage' };
+    }
+  }
+
+  assessEnvironment(recentActivity) {
+    const environmentActivity = recentActivity.filter(activity => {
+      const content = (activity.topic + ' ' + (activity.learned || '')).toLowerCase();
+      return content.match(/workspace|environment|setup|tools|office|studio|professional/);
+    });
+    
+    if (environmentActivity.length === 0) {
+      return { status: 'personal_space', evidence: 'No professional environment development' };
+    } else {
+      return { status: 'professional_space', evidence: 'Working on professional environment' };
+    }
+  }
+
+  assessDecisionPatterns(recentActivity) {
+    const decisionActivity = recentActivity.filter(activity => {
+      const content = (activity.topic + ' ' + (activity.learned || '')).toLowerCase();
+      return content.match(/decision|strategy|plan|goal|opportunity|risk|invest/);
+    });
+    
+    if (decisionActivity.length <= 1) {
+      return { status: 'reactive', evidence: 'Limited strategic decision making' };
+    } else if (decisionActivity.length <= 3) {
+      return { status: 'developing', evidence: 'Growing strategic thinking' };
+    } else {
+      return { status: 'strategic', evidence: 'Consistent strategic decision making' };
+    }
+  }
+
+  assessProfessionalHabits(recentActivity) {
+    const professionalActivity = recentActivity.filter(activity => {
+      const content = (activity.topic + ' ' + (activity.learned || '')).toLowerCase();
+      return content.match(/professional|skill|competency|expertise|craft|discipline/);
+    });
+    
+    return {
+      status: professionalActivity.length >= 3 ? 'professional' : 'developing',
+      evidence: `${professionalActivity.length} professional development activities`
+    };
+  }
+
+  assessLearningOrientation(recentActivity) {
+    const strategicLearning = recentActivity.filter(activity => {
+      const content = (activity.topic + ' ' + (activity.learned || '')).toLowerCase();
+      return content.match(/analysis|framework|system|methodology|approach/);
+    });
+    
+    return {
+      status: strategicLearning.length >= 2 ? 'systematic' : 'casual',
+      evidence: `${strategicLearning.length} systematic learning approaches`
+    };
+  }
+
+  assessNetworkEngagement(recentActivity) {
+    const networkActivity = recentActivity.filter(activity => {
+      const content = (activity.topic + ' ' + (activity.learned || '')).toLowerCase();
+      return content.match(/contact|connect|relationship|network|community|professional/);
+    });
+    
+    return {
+      status: networkActivity.length >= 2 ? 'active' : 'passive',
+      evidence: `${networkActivity.length} networking activities`
+    };
+  }
+
+  assessIndustryImmersion(recentActivity) {
+    const industryActivity = recentActivity.filter(activity => {
+      const content = (activity.topic + ' ' + (activity.learned || '')).toLowerCase();
+      return content.match(/industry|company|business|market|trends|news|insider/);
+    });
+    
+    return {
+      status: industryActivity.length >= 3 ? 'immersed' : 'surface',
+      evidence: `${industryActivity.length} industry-focused activities`
+    };
+  }
+
+  calculateIdentityStrength(currentIdentity) {
+    const strengthMap = {
+      professional_oriented: 3, transitioning: 2, consumer_oriented: 1,
+      connected: 3, emerging: 2, isolated: 1,
+      professional_language: 3, mixed_language: 2, fan_language: 1,
+      professional_space: 2, personal_space: 1,
+      strategic: 3, developing: 2, reactive: 1,
+      professional: 2, developing: 1,
+      systematic: 2, casual: 1,
+      active: 2, passive: 1,
+      immersed: 2, surface: 1
+    };
+    
+    const scores = [
+      strengthMap[currentIdentity.daily_routines.status] || 1,
+      strengthMap[currentIdentity.social_circles.status] || 1,
+      strengthMap[currentIdentity.language_patterns.status] || 1,
+      strengthMap[currentIdentity.environment_cues.status] || 1,
+      strengthMap[currentIdentity.decision_patterns.status] || 1,
+      strengthMap[currentIdentity.professional_habits.status] || 1,
+      strengthMap[currentIdentity.learning_orientation.status] || 1,
+      strengthMap[currentIdentity.network_engagement.status] || 1,
+      strengthMap[currentIdentity.industry_immersion.status] || 1
+    ];
+    
+    const totalScore = scores.reduce((sum, score) => sum + score, 0);
+    const maxScore = 9 * 3; // 9 categories, max 3 points each
+    
+    return {
+      score: totalScore,
+      max_score: maxScore,
+      percentage: Math.round((totalScore / maxScore) * 100),
+      level: totalScore <= 12 ? 'beginner' : totalScore <= 18 ? 'developing' : 'established'
+    };
+  }
+
+  assessTransformationReadiness(currentIdentity) {
+    const readinessFactors = [];
+    
+    // Check for signs of readiness to change
+    if (currentIdentity.daily_routines.status !== 'consumer_oriented') {
+      readinessFactors.push('routine_development');
+    }
+    if (currentIdentity.learning_orientation.status === 'systematic') {
+      readinessFactors.push('systematic_learning');
+    }
+    if (currentIdentity.decision_patterns.status !== 'reactive') {
+      readinessFactors.push('strategic_thinking');
+    }
+    
+    return {
+      ready: readinessFactors.length >= 2,
+      factors: readinessFactors,
+      recommendation: readinessFactors.length >= 2 ? 
+        'Ready for identity transformation interventions' : 
+        'Focus on building foundational habits first'
+    };
+  }
+
+  defineTargetIdentity(projectConfig) {
+    const goal = projectConfig.goal?.toLowerCase() || '';
+    let targetIdentity = {};
+    
+    // Base professional identity characteristics
+    const baseIdentity = {
+      daily_rituals: {
+        morning: 'Industry news review and strategic planning',
+        work_blocks: 'Deep focus on craft development',
+        evening: 'Network engagement and reflection'
+      },
+      social_circles: {
+        primary: 'Industry practitioners and thought leaders',
+        secondary: 'Peers in target field',
+        aspirational: 'Senior professionals and mentors'
+      },
+      language_patterns: {
+        internal_dialogue: 'Strategic and opportunity-focused',
+        external_communication: 'Professional terminology and insights',
+        decision_framework: 'Industry standards and best practices'
+      },
+      environment_design: {
+        workspace: 'Professional setup optimized for craft',
+        information_diet: 'Industry publications and professional content',
+        physical_cues: 'Visual reminders of professional identity'
+      },
+      decision_patterns: {
+        opportunity_recognition: 'Continuously scanning for strategic openings',
+        risk_assessment: 'Calculated professional risks',
+        resource_allocation: 'Investment in long-term professional development'
+      }
+    };
+    
+    // Customize based on specific goal
+    if (goal.includes('lucasfilm') || goal.includes('creative') || goal.includes('entertainment')) {
+      targetIdentity = {
+        ...baseIdentity,
+        daily_rituals: {
+          ...baseIdentity.daily_rituals,
+          morning: 'Industry trade publication review (Variety, Deadline, THR)',
+          creative_practice: 'Daily creative development exercises'
+        },
+        social_circles: {
+          primary: 'Creative development professionals and storytellers',
+          secondary: 'Film industry practitioners and content creators',
+          aspirational: 'Senior creative executives and successful filmmakers'
+        },
+        language_patterns: {
+          ...baseIdentity.language_patterns,
+          industry_terminology: 'Development, IP, pipeline, greenlight, creative executive',
+          perspective: 'Creative business strategist rather than fan'
+        },
+        environment_design: {
+          workspace: 'Creative workspace with industry references',
+          information_diet: 'Trade publications, industry podcasts, professional content',
+          physical_cues: 'Professional creative tools and industry artwork'
+        }
+      };
+    }
+    
+    return targetIdentity;
+  }
+
+  generateIdentityShifts(currentState, targetState, projectConfig) {
+    const shifts = [];
+    const currentIdentity = currentState.identity_snapshot;
+    const targetIdentity = targetState;
+    
+    // Daily routine shifts
+    if (currentIdentity.daily_routines.status === 'consumer_oriented') {
+      shifts.push({
+        category: 'daily_routine',
+        type: 'micro_habit',
+        title: 'Industry Morning Briefing',
+        description: 'Read one industry article during morning coffee',
+        implementation: 'Add 10 minutes to morning routine for trade publication',
+        frequency: 'daily',
+        identity_signal: 'Professional stays informed about industry',
+        difficulty: 'easy',
+        estimated_time: '10 minutes'
+      });
+    }
+    
+    // Language pattern shifts
+    if (currentIdentity.language_patterns.status === 'fan_language') {
+      shifts.push({
+        category: 'language_patterns',
+        type: 'cognitive_reframe',
+        title: 'Professional Perspective Practice',
+        description: 'Reframe observations using industry terminology',
+        implementation: 'When discussing projects, ask "What would a development exec think?"',
+        frequency: 'during discussions',
+        identity_signal: 'Think like an industry professional',
+        difficulty: 'medium',
+        estimated_time: 'ongoing'
+      });
+    }
+    
+    // Social circle shifts
+    if (currentIdentity.social_circles.status === 'isolated') {
+      shifts.push({
+        category: 'social_circles',
+        type: 'network_building',
+        title: 'Professional Connection',
+        description: 'Follow and engage with 3 industry professionals on LinkedIn',
+        implementation: 'Find and follow professionals, comment thoughtfully on posts',
+        frequency: 'weekly',
+        identity_signal: 'Part of professional community',
+        difficulty: 'medium',
+        estimated_time: '20 minutes weekly'
+      });
+    }
+    
+    // Environment design shifts
+    if (currentIdentity.environment_cues.status === 'personal_space') {
+      shifts.push({
+        category: 'environment',
+        type: 'space_design',
+        title: 'Professional Workspace Setup',
+        description: 'Create dedicated professional workspace with industry materials',
+        implementation: 'Designate workspace area, add professional references',
+        frequency: 'one-time setup',
+        identity_signal: 'Professional environment reinforces identity',
+        difficulty: 'easy',
+        estimated_time: '1 hour setup'
+      });
+    }
+    
+    // Decision pattern shifts
+    if (currentIdentity.decision_patterns.status === 'reactive') {
+      shifts.push({
+        category: 'decision_patterns',
+        type: 'strategic_thinking',
+        title: 'Strategic Decision Framework',
+        description: 'Before major decisions, ask "How does this advance my professional goals?"',
+        implementation: 'Pause before decisions, apply strategic lens',
+        frequency: 'as needed',
+        identity_signal: 'Strategic thinker and planner',
+        difficulty: 'medium',
+        estimated_time: '5 minutes per decision'
+      });
+    }
+    
+    // Professional habits
+    if (currentIdentity.professional_habits.status === 'developing') {
+      shifts.push({
+        category: 'professional_habits',
+        type: 'skill_development',
+        title: 'Daily Craft Practice',
+        description: 'Dedicate time to developing core professional competencies',
+        implementation: 'Block 30 minutes daily for skill building',
+        frequency: 'daily',
+        identity_signal: 'Committed professional developing expertise',
+        difficulty: 'medium',
+        estimated_time: '30 minutes daily'
+      });
+    }
+    
+    // Industry immersion
+    if (currentIdentity.industry_immersion.status === 'surface') {
+      shifts.push({
+        category: 'industry_immersion',
+        type: 'information_diet',
+        title: 'Industry Intelligence Routine',
+        description: 'Replace casual content with professional industry content',
+        implementation: 'Substitute entertainment for trade publications and industry podcasts',
+        frequency: 'daily',
+        identity_signal: 'Industry insider with professional awareness',
+        difficulty: 'easy',
+        estimated_time: 'same time, different content'
+      });
+    }
+    
+    return shifts.slice(0, 3); // Return top 3 most impactful shifts
+  }
+
+  async generateIdentityBasedTasks(identityShifts, projectConfig) {
+    const tasks = [];
+    
+    identityShifts.forEach(shift => {
+      tasks.push({
+        id: this.generateId(),
+        title: shift.title,
+        description: shift.description + '\\n\\nIdentity Signal: ' + shift.identity_signal,
+        type: 'identity_transformation',
+        category: shift.category,
+        implementation_notes: shift.implementation,
+        frequency: shift.frequency,
+        difficulty: shift.difficulty,
+        estimated_time: shift.estimated_time,
+        identity_impact: 'high',
+        prerequisites: [],
+        branch_type: 'identity_shift',
+        generated_from: 'identity_transformation_engine'
+      });
+    });
+    
+    return tasks;
+  }
+
+  async analyzeIdentityTransformation() {
+    const projectId = await this.requireActiveProject();
+    const projectConfig = await this.loadProjectData(projectId, 'config.json');
+    const learningHistory = await this.loadProjectData(projectId, 'learning_history.json') || { completed_topics: [] };
+    
+    // Analyze current identity
+    const currentState = this.analyzeCurrentIdentity(projectConfig, learningHistory);
+    
+    // Define target identity 
+    const targetState = this.defineTargetIdentity(projectConfig);
+    
+    // Generate identity shifts
+    const identityShifts = this.generateIdentityShifts(currentState, targetState, projectConfig);
+    
+    // Create identity-based tasks
+    const identityTasks = await this.generateIdentityBasedTasks(identityShifts, projectConfig);
+    
+    let analysis = `🎭 IDENTITY TRANSFORMATION ANALYSIS for "${projectConfig.goal}"\\n\\n`;
+    
+    analysis += `📊 CURRENT IDENTITY PROFILE:\\n`;
+    analysis += `Overall Identity Strength: ${currentState.identity_strength.percentage}% (${currentState.identity_strength.level})\\n`;
+    analysis += `Transformation Readiness: ${currentState.transformation_readiness.ready ? '✅ Ready' : '⚠️ Building Foundation'}\\n\\n`;
+    
+    analysis += `🔍 IDENTITY ASSESSMENT BY DIMENSION:\\n`;
+    Object.entries(currentState.identity_snapshot).forEach(([dimension, data]) => {
+      const statusEmoji = data.status.includes('professional') || data.status === 'connected' || data.status === 'strategic' ? '✅' : 
+                          data.status.includes('developing') || data.status === 'emerging' || data.status === 'mixed' ? '🔄' : '🎯';
+      analysis += `${statusEmoji} ${dimension.replace(/_/g, ' ').toUpperCase()}: ${data.status} - ${data.evidence}\\n`;
+    });
+    
+    analysis += `\\n🎯 IDENTITY TRANSFORMATION INTERVENTIONS:\\n`;
+    identityShifts.forEach((shift, index) => {
+      analysis += `\\n${index + 1}. **${shift.title}** (${shift.category})\\n`;
+      analysis += `   • Implementation: ${shift.implementation}\\n`;
+      analysis += `   • Identity Signal: ${shift.identity_signal}\\n`;
+      analysis += `   • Frequency: ${shift.frequency} | Difficulty: ${shift.difficulty}\\n`;
+    });
+    
+    analysis += `\\n🧬 IDENTITY EVOLUTION PATHWAY:\\n`;
+    analysis += `Current → Target Identity Profile:\\n`;
+    analysis += `• Daily Routines: Consumer habits → Professional rituals\\n`;
+    analysis += `• Social Circles: Isolation → Industry community\\n`;
+    analysis += `• Language: Fan perspective → Professional insider\\n`;
+    analysis += `• Environment: Personal space → Professional workspace\\n`;
+    analysis += `• Decisions: Reactive → Strategic opportunity-focused\\n\\n`;
+    
+    analysis += `💡 IMPLEMENTATION STRATEGY:\\n`;
+    analysis += `Start with ${identityShifts.length} micro-shifts that gradually reshape daily reality.\\n`;
+    analysis += `Each shift sends identity signals that compound over time.\\n`;
+    analysis += `Focus on becoming the type of person who naturally belongs at your goal.\\n\\n`;
+    
+    if (currentState.transformation_readiness.ready) {
+      analysis += `🚀 You're ready for identity transformation! Begin implementing shifts immediately.\\n`;
+    } else {
+      analysis += `🏗️ Focus on building foundational habits before advanced identity work.\\n`;
+      analysis += `Recommendation: ${currentState.transformation_readiness.recommendation}\\n`;
+    }
+    
+    return {
+      content: [{
+        type: 'text',
+        text: analysis
+      }]
+    };
+  }
 }
 
-// Start the server using stdio transport
-const server = new ForestServer();
-const transport = new StdioServerTransport();
-(async () => {
-  await server.server.connect(transport);
-})();
+// Export for testing
+export default ForestServer;
+
+// Start the server using stdio transport (only if this is the main module)
+// Check if running directly (not being imported for testing)
+if (process.argv[1] && process.argv[1].includes('server.js') && !process.env.NODE_ENV?.includes('test')) {
+  const server = new ForestServer();
+  const transport = new StdioServerTransport();
+  (async () => {
+    await server.server.connect(transport);
+  })();
+}
