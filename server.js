@@ -52,7 +52,7 @@ class ForestServer {
               properties: {
                 project_id: {
                   type: 'string',
-                  description: 'Unique project identifier (e.g. "marketing_career_transition")'
+                  description: 'Unique project identifier (e.g. "dream_project_alpha")'
                 },
                 goal: {
                   type: 'string',
@@ -489,6 +489,20 @@ class ForestServer {
             name: 'list_learning_paths',
             description: 'Show all available learning paths in the current project',
             inputSchema: { type: 'object', properties: {} }
+          },
+          {
+            name: 'analyze_reasoning',
+            description: 'Generate logical deductions and strategic insights from completion patterns',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                include_detailed_analysis: {
+                  type: 'boolean',
+                  default: true,
+                  description: 'Include detailed logical chains and pattern analysis'
+                }
+              }
+            }
           }
         ]
       };
@@ -576,6 +590,8 @@ class ForestServer {
             return await this.focusLearningPath(args.path_name, args.duration || 'until next switch');
           case 'list_learning_paths':
             return await this.listLearningPaths();
+          case 'analyze_reasoning':
+            return await this.analyzeReasoning(args.include_detailed_analysis ?? true);
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -748,6 +764,18 @@ class ForestServer {
     if (avgRecent > 4) {return 'challenging';}
     if (avgRecent < 2) {return 'too_easy';}
     return 'appropriate';
+  }
+
+  // Universal goal analysis - no domain restrictions
+  analyzeGoal(goal, context = '', credentials = []) {
+    // Let the system analyze any goal without predetermined categories
+    return {
+      goal: goal,
+      context: context,
+      existing_knowledge: credentials,
+      requires_creative_approach: true,
+      timeframe: 'determined_by_progress'
+    };
   }
 
   // Exposed tool to trigger memory sync manually
@@ -1080,24 +1108,17 @@ class ForestServer {
   async buildHTATree(pathName, learningStyle = 'mixed', focusAreas = []) {
     const projectId = await this.requireActiveProject();
     const projectConfig = await this.loadProjectData(projectId, 'config.json');
-
     if (!projectConfig) {
       throw new Error('Project configuration not found');
     }
-
-    // Determine which path to build for
     let targetPath = pathName;
     if (!targetPath) {
       targetPath = projectConfig.active_learning_path || 'general';
     }
-
-    // Get path-specific configuration
     let pathConfig = null;
     if (projectConfig.learning_paths) {
       pathConfig = projectConfig.learning_paths.find(p => p.path_name === targetPath);
     }
-
-    // Create path if it doesn't exist
     if (!pathConfig && targetPath !== 'general') {
       pathConfig = {
         path_name: targetPath,
@@ -1105,56 +1126,54 @@ class ForestServer {
         priority: 'medium',
         created_dynamically: true
       };
-      
-      // Add to project config
       if (!projectConfig.learning_paths) {
         projectConfig.learning_paths = [];
       }
       projectConfig.learning_paths.push(pathConfig);
-      // Set new path as active if none selected
       if (!projectConfig.active_learning_path) {
         projectConfig.active_learning_path = targetPath;
       }
       await this.saveProjectData(projectId, 'config.json', projectConfig);
     }
-
-    // Load path-specific learning history
     const learningHistory = await this.loadPathData(projectId, targetPath, 'learning_history.json') || {
       completed_topics: [],
       skill_levels: {},
       knowledge_gaps: []
     };
-
-    // Build path-specific HTA tree
+    // Universal goal analysis - no domain restrictions
+    const goalAnalysis = this.analyzeGoal(projectConfig.goal, projectConfig.context, projectConfig.existing_credentials);
+    // Generate branches and ensure they're arrays
+    const generatedBranches = this.generateIntelligentBranches(projectConfig, learningHistory, focusAreas);
+    const generatedNodes = this.generateSequencedFrontierNodes(projectConfig, learningHistory);
+    
     const hta = {
       project_id: projectId,
       path_name: targetPath,
       north_star: pathConfig ? `${projectConfig.goal} - ${targetPath}` : projectConfig.goal,
+      goal_type: 'universal',
+      unique_context: goalAnalysis.context,
+      existing_knowledge: goalAnalysis.existing_knowledge,
+      requires_creative_approach: goalAnalysis.requires_creative_approach,
       path_interests: pathConfig?.interests || [],
       context: projectConfig.context,
       learning_style: learningStyle,
       urgency_level: projectConfig.urgency_level,
       created: new Date().toISOString(),
-      
-      // Path-specific learning branches
-      branches: this.generatePathSpecificBranches(targetPath, pathConfig, projectConfig, learningHistory, focusAreas),
-      
-      // Path-specific frontier nodes
-      frontier_nodes: this.generatePathSpecificFrontierNodes(targetPath, pathConfig, projectConfig, learningHistory),
-      
+      // Ensure branches and nodes are arrays
+      branches: Array.isArray(generatedBranches) ? generatedBranches : [],
+      frontier_nodes: Array.isArray(generatedNodes) ? generatedNodes : [],
       completed_nodes: [],
       last_evolution: new Date().toISOString()
     };
-
-    // Save HTA tree to path-specific location
     const saved = await this.savePathData(projectId, targetPath, 'hta.json', hta);
     if (!saved) {
       throw new Error('Failed to save HTA tree');
     }
-
-    const branchSummary = hta.branches.slice(0, 3).map(b => `• ${b.title}`).join('\n');
-    const nodeSummary = hta.frontier_nodes.slice(0, 3).map(n => `• ${n.title} (${n.estimated_time})`).join('\n');
-
+    const branches = Array.isArray(hta.branches) ? hta.branches : [];
+    const nodes = Array.isArray(hta.frontier_nodes) ? hta.frontier_nodes : [];
+    
+    const branchSummary = branches.length > 0 ? branches.slice(0, 3).map(b => `• ${b?.title || 'Untitled'}`).join('\n') : 'No branches available';
+    const nodeSummary = nodes.slice(0, 3).map(n => `• ${n?.title || 'Untitled'} (${n?.estimated_time || 'TBD'})`).join('\n');
     return {
       content: [
         {
@@ -1166,219 +1185,188 @@ class ForestServer {
   }
 
   generateIntelligentBranches(projectConfig, learningHistory, focusAreas) {
-    const goal = projectConfig.goal.toLowerCase();
+    // Universal branch generation - adapts to ANY goal
+    const goal = projectConfig.goal;
+    const context = projectConfig.context || '';
     const interests = projectConfig.specific_interests || [];
-    const branches = [];
+    const credentials = projectConfig.existing_credentials || [];
+    const constraints = projectConfig.constraints || {};
     
-    // Interest-driven branches come FIRST to maintain motivation
-    if (interests.length > 0) {
-      interests.forEach((interest, index) => {
-        branches.push({
-          id: this.generateId(),
-          title: `Direct Path: ${interest}`,
-          description: `Learn exactly what you need to accomplish: ${interest}`,
-          status: 'active',
-          priority: 'critical', // Highest priority - what they actually want
-          sequence: index + 1,
-          interest_driven: true
-        });
-      });
-    }
+    // Generate goal-agnostic strategic branches
+    const universalBranches = [];
     
-    // Supporting fundamentals - positioned as enablers, not gatekeepers
-    branches.push(
-      {
-        id: this.generateId(),
-        title: `${projectConfig.goal} Foundation Skills`,
-        description: 'Core concepts that support your specific interests',
-        status: 'active',
-        priority: 'high',
-        sequence: interests.length + 1
-      },
-      {
-        id: this.generateId(),
-        title: `${projectConfig.goal} Tools & Resources`,
-        description: 'Essential tools, platforms, and resources for practice',
-        status: 'active',
-        priority: 'high',
-        sequence: interests.length + 2
-      },
-      {
-        id: this.generateId(),
-        title: `${projectConfig.goal} Advanced Application`,
-        description: 'Building on your interests to explore deeper concepts',
-        status: 'future',
-        priority: 'medium',
-        sequence: interests.length + 3
-      }
-    );
-    
-    // Add domain-specific branches based on goal keywords
-    if (goal.includes('marketing') || goal.includes('business')) {
-      branches.push({
-        id: this.generateId(),
-        title: 'Analytics & Measurement',
-        description: 'Data analysis, metrics, and performance tracking',
-        status: 'active',
-        priority: 'medium',
-        sequence: 4
-      });
-    }
-    
-    if (goal.includes('programming') || goal.includes('development') || goal.includes('coding')) {
-      branches.push({
-        id: this.generateId(),
-        title: 'Code Projects & Portfolio',
-        description: 'Building demonstrable projects and portfolio pieces',
-        status: 'active',
-        priority: 'high',
-        sequence: 4
-      });
-    }
-    
-    if (goal.includes('design') || goal.includes('creative')) {
-      branches.push({
-        id: this.generateId(),
-        title: 'Creative Portfolio Development',
-        description: 'Building and refining creative work examples',
-        status: 'active',
-        priority: 'high',
-        sequence: 4
-      });
-    }
-    
-    // Always add industry/professional branch
-    branches.push({
+    // Branch 1: Foundation/Discovery - always needed
+    universalBranches.push({
       id: this.generateId(),
-      title: `${projectConfig.goal} Professional Development`,
-      description: 'Industry knowledge, networking, and career advancement',
-      status: 'future',
-      priority: 'medium',
-      sequence: 5
+      title: `${goal.split(' ').slice(0, 2).join(' ')} - Foundation Discovery`,
+      description: `Explore the fundamental landscape of ${goal} and discover your natural entry points`,
+      status: 'active',
+      priority: 'critical',
+      sequence: 1,
+      goal_aligned: true
     });
     
-    // Add custom branches from focus areas if provided
-    if (focusAreas && focusAreas.length > 0) {
-      focusAreas.forEach((area, index) => {
-        branches.push({
-          id: this.generateId(),
-          title: `Specialized: ${area}`,
-          description: `Deep dive into ${area} as it relates to ${projectConfig.goal}`,
-          status: 'future',
-          priority: 'medium',
-          sequence: 6 + index
-        });
+    // Branch 2: Hands-on Practice - universal for skill building
+    universalBranches.push({
+      id: this.generateId(),
+      title: `${goal.split(' ').slice(0, 2).join(' ')} - Practical Application`,
+      description: `Get hands-on experience and build real skills toward ${goal}`,
+      status: 'active',
+      priority: 'high', 
+      sequence: 2,
+      goal_aligned: true
+    });
+    
+    // Branch 3: Knowledge Building - adapt to goal complexity
+    universalBranches.push({
+      id: this.generateId(),
+      title: `${goal.split(' ').slice(0, 2).join(' ')} - Deep Learning`,
+      description: `Develop comprehensive understanding and expertise in ${goal}`,
+      status: 'active',
+      priority: 'high',
+      sequence: 3,
+      goal_aligned: true
+    });
+    
+    // Branch 4: Connection/Community - valuable for most goals
+    if (!goal.toLowerCase().includes('personal') && !goal.toLowerCase().includes('private')) {
+      universalBranches.push({
+        id: this.generateId(),
+        title: `${goal.split(' ').slice(0, 2).join(' ')} - Community & Mentorship`,
+        description: `Connect with others pursuing ${goal} and find mentors`,
+        status: 'future',
+        priority: 'medium',
+        sequence: 4,
+        goal_aligned: true
       });
     }
     
-    return branches;
+    // Branch 5: Unique/Creative Path - leverage existing credentials if relevant
+    if (credentials.length > 0) {
+      const relevantCred = credentials.find(c => 
+        goal.toLowerCase().includes(c.subject_area.toLowerCase()) ||
+        c.relevance_to_goal?.toLowerCase().includes('related')
+      );
+      if (relevantCred) {
+        universalBranches.push({
+          id: this.generateId(),
+          title: `${goal.split(' ').slice(0, 2).join(' ')} - Unique Advantage Path`,
+          description: `Leverage your ${relevantCred.subject_area} background for a unique approach to ${goal}`,
+          status: 'active',
+          priority: 'medium',
+          sequence: 5,
+          goal_aligned: true,
+          leverages_existing: relevantCred.subject_area
+        });
+      }
+    }
+    
+    return universalBranches;
   }
 
   generateSequencedFrontierNodes(projectConfig, learningHistory) {
-    // const knowledgeLevel = projectConfig.knowledge_level || 0; // Reserved for future complexity logic
+    // Universal task generation - works for ANY goal
     const goal = projectConfig.goal;
-    const interests = projectConfig.specific_interests || [];
-    const focusStyle = projectConfig.focus_duration || 'flexible';
-    const nodes = [];
-
-    // Generate time estimates based on user's focus preference
-    const getEstimatedTime = (complexity) => {
-      const focusDurationMinutes = this.parseTimeAvailable(focusStyle);
-      
-      // Handle micro-focus sessions (accessibility support for chronic illness)
-      if (focusDurationMinutes <= 10) {
-        return complexity === 'simple' ? `${focusDurationMinutes} minutes` : `${Math.min(focusDurationMinutes * 2, 15)} minutes`;
-      }
-      
-      if (focusStyle === 'flexible' || focusStyle.includes('natural') || focusStyle.includes('variable')) {
+    const context = projectConfig.context || '';
+    const focusDuration = projectConfig.focus_duration || 'flexible';
+    const credentials = projectConfig.existing_credentials || [];
+    const completedTopics = learningHistory.completed_topics?.map(t => t.topic) || [];
+    
+    // Generate time estimates based on focus preference
+    const getTimeEstimate = (complexity = 'medium') => {
+      if (focusDuration.includes('flexible') || focusDuration.includes('natural')) {
         return 'As long as needed';
       }
-      if (focusStyle.includes('25') || focusStyle.includes('pomodoro')) {
+      if (focusDuration.includes('25') || focusDuration.includes('pomodoro')) {
         return complexity === 'simple' ? '25 minutes' : '50 minutes';
       }
-      if (focusStyle.includes('hour') || focusStyle.includes('60')) {
-        return complexity === 'simple' ? '30-60 minutes' : '1-2 hours';
+      if (focusDuration.includes('hour')) {
+        return complexity === 'simple' ? '45 minutes' : '90 minutes';
       }
-      if (focusStyle.includes('deep') || focusStyle.includes('long')) {
-        return complexity === 'simple' ? '1-2 hours' : '2-4 hours';
-      }
-      return 'Until natural stopping point';
+      return '30 minutes'; // sensible default
     };
-
-    // PATHWAY 1: User has specific interests - start there
-    if (interests.length > 0) {
-      const firstInterest = interests[0];
-      const interestId = this.generateId();
-      
-      nodes.push({
-        id: interestId,
-        title: `Quick Start: ${firstInterest}`,
-        description: `Jump right into working toward: ${firstInterest}. Learn by doing, fill gaps as needed.`,
-        branch_type: 'interest_driven',
-        estimated_time: getEstimatedTime('simple'),
-        priority: 'critical',
-        status: 'ready',
-        knowledge_level: 'beginner',
-        magnitude: 6,
-        prerequisites: [],
-        learning_outcomes: [`Take first steps toward ${firstInterest}`, 'Identify what specific skills you need', 'Build motivation through progress'],
-        interest_based: true
-      });
-    } else {
-      // PATHWAY 2: User doesn't know where to start - gentle exploration first
-      const explorationId = this.generateId();
-      const samplingId = this.generateId();
-      
-      nodes.push(
-        {
-          id: explorationId,
-          title: `Explore: What's Possible in ${goal}`,
-          description: `Gentle overview to discover what interests you most about ${goal}`,
-          branch_type: 'exploration',
-          estimated_time: getEstimatedTime('simple'),
-          priority: 'critical',
-          status: 'ready',
-          knowledge_level: 'beginner',
-          magnitude: 5, // Very easy to prevent overwhelm
-          prerequisites: [],
-          learning_outcomes: [`See examples of what's possible in ${goal}`, 'Identify what catches your interest', 'Discover different paths you could take']
-        },
-        {
-          id: samplingId,
-          title: `Sample: Try Something Small in ${goal}`,
-          description: `Quick, low-pressure hands-on experience to see what resonates`,
-          branch_type: 'sampling',
-          estimated_time: getEstimatedTime('simple'),
-          priority: 'high',
-          status: 'ready',
-          knowledge_level: 'beginner',
-          magnitude: 6,
-          prerequisites: [explorationId],
-          learning_outcomes: [`Get hands-on experience`, 'Discover what you enjoy', 'Identify your natural starting point']
-        }
-      );
-    }
-
-    // Add gentle fundamentals as backup - always available but lower priority
-    const fundamentalsId = this.generateId();
-    nodes.push({
-      id: fundamentalsId,
-      title: `${goal}: Core Concepts`,
-      description: interests.length > 0 ? 
-        `Supporting knowledge for your interests: ${interests.join(', ')}` :
-        `Essential ${goal} concepts - available when you're ready`,
-      branch_type: 'fundamentals',
-      estimated_time: getEstimatedTime('simple'),
-      priority: interests.length > 0 ? 'medium' : 'high',
+    
+    const universalNodes = [];
+    
+    // Node 1: Vision/Success Definition - universal first step
+    universalNodes.push({
+      id: this.generateId(),
+      title: `Envision Success: ${goal}`,
+      description: `Define what achieving \"${goal}\" would look and feel like specifically for you`,
+      branch_type: 'vision',
+      estimated_time: getTimeEstimate('simple'),
+      priority: 'critical',
       status: 'ready',
       knowledge_level: 'beginner',
-      magnitude: 7,
+      magnitude: 4,
       prerequisites: [],
-      learning_outcomes: [`Understand key ${goal} concepts`, 'Build foundation knowledge', 'Support your practical learning'],
-      supports_interests: interests
+      learning_outcomes: [`Clear vision of ${goal}`, 'Motivation and direction', 'Success criteria']
     });
-
-    return nodes;
+    
+    // Node 2: Landscape Survey - universal exploration
+    universalNodes.push({
+      id: this.generateId(),
+      title: `Survey the Landscape: ${goal}`,
+      description: `Research and explore what's involved in ${goal} - discover possibilities and paths`,
+      branch_type: 'exploration', 
+      estimated_time: getTimeEstimate('medium'),
+      priority: 'high',
+      status: 'ready',
+      knowledge_level: 'beginner',
+      magnitude: 5,
+      prerequisites: [],
+      learning_outcomes: [`Understanding of ${goal} landscape`, 'Identify interesting areas', 'Discover entry points']
+    });
+    
+    // Node 3: First Practical Step - always valuable
+    universalNodes.push({
+      id: this.generateId(),
+      title: `Take First Action: ${goal}`,
+      description: `Take a small, concrete first step toward ${goal} - focus on momentum over perfection`,
+      branch_type: 'action',
+      estimated_time: getTimeEstimate('medium'),
+      priority: 'high', 
+      status: 'ready',
+      knowledge_level: 'beginner',
+      magnitude: 6,
+      prerequisites: [],
+      learning_outcomes: ['Momentum and confidence', 'Real-world experience', 'Learning from doing']
+    });
+    
+    // Node 4: Leverage Existing Knowledge (if credentials exist)
+    if (credentials.length > 0) {
+      const relevantCred = credentials[0]; // Use first credential
+      universalNodes.push({
+        id: this.generateId(),
+        title: `Connect ${relevantCred.subject_area} to ${goal.split(' ').slice(0, 2).join(' ')}`,
+        description: `Explore how your ${relevantCred.subject_area} background can accelerate your progress toward ${goal}`,
+        branch_type: 'leverage_existing',
+        estimated_time: getTimeEstimate('simple'),
+        priority: 'medium',
+        status: 'ready',
+        knowledge_level: 'intermediate',
+        magnitude: 5,
+        prerequisites: [],
+        learning_outcomes: [`Bridge ${relevantCred.subject_area} to ${goal}`, 'Accelerated learning path', 'Unique advantage identification']
+      });
+    }
+    
+    // Node 5: Reflection and Adjustment - always valuable after initial action
+    universalNodes.push({
+      id: this.generateId(),
+      title: `Reflect and Refine: ${goal} Approach`,
+      description: `Reflect on your initial progress toward ${goal} and refine your approach based on what you've learned`,
+      branch_type: 'reflection',
+      estimated_time: getTimeEstimate('simple'),
+      priority: 'medium',
+      status: 'future', // Don't do immediately
+      knowledge_level: 'beginner', 
+      magnitude: 4,
+      prerequisites: [],
+      learning_outcomes: ['Self-awareness', 'Strategy optimization', 'Course correction']
+    });
+    
+    return universalNodes;
   }
 
   generatePathSpecificBranches(pathName, pathConfig, projectConfig, learningHistory, focusAreas) {
@@ -1653,13 +1641,13 @@ class ForestServer {
       };
     }
 
-    const activeBranches = hta.branches.filter(b => b.status === 'active');
-    const readyNodes = hta.frontier_nodes.filter(n => n.status === 'ready');
-    const completedNodes = hta.completed_nodes || [];
+    const activeBranches = Array.isArray(hta.branches) ? hta.branches.filter(b => b.status === 'active') : [];
+    const readyNodes = Array.isArray(hta.frontier_nodes) ? hta.frontier_nodes.filter(n => n.status === 'ready') : [];
+    const completedNodes = Array.isArray(hta.completed_nodes) ? hta.completed_nodes : [];
     
     const branchStatus = activeBranches.map(b => `• ${b.title}: ${b.priority} priority (step ${b.sequence})`).join('\n');
     const frontierStatus = readyNodes.slice(0, 5).map(n => 
-      `• ${n.title} (${n.estimated_time}) - ${n.learning_outcomes[0]}`
+      `• ${n?.title || 'Untitled'} (${n?.estimated_time || 'TBD'}) - ${n?.learning_outcomes?.[0] || 'Learning outcome TBD'}`
     ).join('\n');
 
     return {
@@ -2128,8 +2116,13 @@ class ForestServer {
     // Generate logical next steps based on what was learned
     const newTasks = [];
     
-    // Always generate a natural continuation task
-    const continuationTask = {
+    // VALIDATION: Ensure incremental progression (the fix you requested)
+    const validatedTasks = this.validateIncrementalProgression(completedBlock, learned, nextQuestions, projectConfig, completionContext);
+    if (validatedTasks.length > 0) {
+      newTasks.push(...validatedTasks);
+    } else {
+      // Fallback to continuation task if validation produces no results
+      const continuationTask = {
       id: this.generateId(),
       title: `Continue: Build on ${completedBlock.action}`,
       description: `Apply and extend what you learned from: ${completedBlock.action}`,
@@ -2143,7 +2136,8 @@ class ForestServer {
       learning_outcomes: [`Apply ${completedBlock.action} knowledge`, 'Deepen understanding', 'Build practical skills'],
       generated_from: 'task_completion'
     };
-    newTasks.push(continuationTask);
+      newTasks.push(continuationTask);
+    }
     
     // Add research task for questions if they exist
     if (nextQuestions) {
@@ -2236,18 +2230,21 @@ class ForestServer {
     return { content: [{ type: 'text', text: status }] };
   }
 
+  // Now integrate pacing context into get_next_task
   async getNextTask(contextFromMemory = '', energyLevel = 3, timeAvailable = '30 minutes') {
     const projectId = await this.requireActiveProject();
     const projectConfig = await this.loadProjectData(projectId, 'config.json');
     
+    // ENHANCED: Generate comprehensive pacing context
+    const pacingContext = await this.generatePacingContext(projectId);
+    
     // Load HTA tree for active path or general project
     const activePath = projectConfig.active_learning_path || 'general';
     const hta = await this.loadPathData(projectId, activePath, 'hta.json') || 
-               await this.loadProjectData(projectId, 'hta.json'); // Fallback to old format
+               await this.loadProjectData(projectId, 'hta.json');
     
-    // Load path-specific learning history
     const learningHistory = await this.loadPathData(projectId, activePath, 'learning_history.json') || 
-                            await this.loadProjectData(projectId, 'learning_history.json') || { // Fallback
+                            await this.loadProjectData(projectId, 'learning_history.json') || {
       completed_topics: [],
       skill_levels: {},
       knowledge_gaps: []
@@ -2261,20 +2258,14 @@ class ForestServer {
     const completedTaskIds = hta.completed_nodes?.map(n => n.id) || [];
     const completedTaskTitles = hta.completed_nodes?.map(n => n.title) || [];
     
-    // Find ready nodes with satisfied prerequisites - STRICT CHECKING
+    // Find ready nodes with satisfied prerequisites
     const readyNodes = hta.frontier_nodes.filter(node => {
-      if (node.status !== 'ready') {return false;}
+      if (node.status !== 'ready') return false;
       
-      // STRICT prerequisite checking - only exact ID matches count
       if (node.prerequisites && node.prerequisites.length > 0) {
         const prereqsMet = node.prerequisites.every(prereq => {
-          // Primary: Check exact ID match
-          if (completedTaskIds.includes(prereq)) {return true;}
-          
-          // Fallback: Check exact title match (no fuzzy matching)
-          if (completedTaskTitles.includes(prereq)) {return true;}
-          
-          // Last resort: Only exact topic matches from learning history
+          if (completedTaskIds.includes(prereq)) return true;
+          if (completedTaskTitles.includes(prereq)) return true;
           return learningHistory.completed_topics.some(topic => 
             topic.topic === prereq
           );
@@ -2282,7 +2273,6 @@ class ForestServer {
         if (!prereqsMet) return false;
       }
       
-      // PATH FOCUS FILTERING: If a learning path is active, prioritize path-relevant tasks
       const activePath = projectConfig.active_learning_path;
       if (activePath) {
         return this.isTaskRelevantToPath(node, activePath);
@@ -2292,12 +2282,10 @@ class ForestServer {
     });
 
     if (readyNodes.length === 0) {
-      // First attempt: Generate adaptive tasks
       await this.generateAdaptiveTasks(projectId, learningHistory, contextFromMemory);
       const updatedHTA = await this.loadProjectData(projectId, 'hta.json');
       let newReadyNodes = updatedHTA.frontier_nodes.filter(n => n.status === 'ready');
       
-      // Second attempt: If still empty, generate smart continuation tasks
       if (newReadyNodes.length === 0) {
         const completedTaskIds = updatedHTA.completed_nodes?.map(n => n.id) || [];
         const continuationTasks = await this.generateSmartNextTasks(projectConfig, learningHistory, completedTaskIds);
@@ -2309,12 +2297,11 @@ class ForestServer {
         }
       }
       
-      // Final fallback: Suggest sequence repair
       if (newReadyNodes.length === 0) {
         return {
           content: [{
             type: 'text',
-            text: `🔧 Sequence appears stuck. Try one of these:\n\n1. **repair_sequence** - Auto-fix the task flow\n2. **debug_task_sequence** - See what's blocking progression\n3. **repair_sequence** with force_rebuild=true - Complete restart\n\n🎯 Goal: "${projectConfig.goal}"\n📊 Progress: ${(hta.completed_nodes?.length || 0)} tasks completed\n\n💡 The sequence should flow like silk - let's get it unstuck!`
+            text: `🔧 Sequence appears stuck. Try repair_sequence to auto-fix the task flow.`
           }]
         };
       }
@@ -2322,34 +2309,46 @@ class ForestServer {
       readyNodes.push(...newReadyNodes);
     }
 
-    // Parse time available to minutes
     const timeInMinutes = this.parseTimeAvailable(timeAvailable);
     
-    // Filter by time available and energy level
+    // ENHANCED: Use pacing context to filter suitable nodes
     let suitableNodes = readyNodes.filter(node => {
       const estimatedMinutes = this.parseTimeAvailable(node.estimated_time);
       const energyRequired = node.magnitude > 7 ? 4 : node.magnitude > 5 ? 3 : 2;
       
-      return estimatedMinutes <= timeInMinutes && energyRequired <= energyLevel;
+      // Apply pacing context constraints
+      const withinComplexityCeiling = node.magnitude <= pacingContext.complexity_ceiling;
+      const aboveChallengeFloor = node.magnitude >= pacingContext.challenge_floor;
+      const appropriateDifficulty = node.magnitude <= (pacingContext.current_capability.avg_difficulty + 1);
+      
+      return estimatedMinutes <= timeInMinutes && 
+             energyRequired <= energyLevel &&
+             withinComplexityCeiling &&
+             aboveChallengeFloor &&
+             appropriateDifficulty;
     });
 
     if (suitableNodes.length === 0) {
-      // If no suitable nodes, suggest the easiest available
       suitableNodes = readyNodes.sort((a, b) => a.magnitude - b.magnitude).slice(0, 1);
     }
 
-    // Select the best task based on priority and learning sequence
-    const nextTask = this.selectOptimalTask(suitableNodes, learningHistory, contextFromMemory);
+    // ENHANCED: Select optimal task using pacing context
+    const nextTask = this.selectOptimalTaskWithPacing(suitableNodes, learningHistory, contextFromMemory, pacingContext);
     
-    // Prepare context for memory integration
+    // Enhanced context for memory integration with pacing insights
     const memoryContext = {
       selected_task: nextTask.title,
       prerequisites_met: nextTask.prerequisites || [],
       learning_goal: nextTask.learning_outcomes[0],
-      knowledge_area: nextTask.branch_type
+      knowledge_area: nextTask.branch_type,
+      pacing_analysis: {
+        current_capability: pacingContext.current_capability.level,
+        recommended_step_size: pacingContext.recommended_step_size.size,
+        pacing_warnings: pacingContext.pacing_warnings.map(w => w.message),
+        momentum_status: pacingContext.momentum_status?.status || 'unknown'
+      }
     };
 
-    // Ensure the nextTask exists in today's schedule for seamless completion tracking
     const today = this.getTodayDate();
     let schedule = await this.loadProjectData(projectId, `day_${today}.json`);
     if (!schedule) {
@@ -2385,9 +2384,67 @@ class ForestServer {
     return {
       content: [{
         type: 'text',
-        text: `🎯 Next Logical Task: "${nextTask.title}"...\n\n📊 Memory Context for Claude: ${JSON.stringify(memoryContext)}`
+        text: `🎯 Next Perfectly Paced Task: "${nextTask.title}"
+
+📊 Pacing Analysis:
+• Current Capability: ${pacingContext.current_capability.level} (${pacingContext.current_capability.confidence} confidence)
+• Recommended Step: ${pacingContext.recommended_step_size.size} (${pacingContext.recommended_step_size.reasoning})
+• Momentum: ${pacingContext.momentum_status?.status || 'building'}
+${pacingContext.pacing_warnings.length > 0 ? `
+⚠️ Pacing Alerts: ${pacingContext.pacing_warnings.map(w => w.message).join(', ')}` : ''}
+
+🧠 Enhanced Memory Context: ${JSON.stringify(memoryContext)}`
       }]
     };
+  }
+  
+  // Enhanced task selection with pacing context
+  selectOptimalTaskWithPacing(nodes, learningHistory, contextFromMemory, pacingContext) {
+    const scoredNodes = nodes.map(node => {
+      let score = 0;
+      
+      // HIGHEST PRIORITY: Pacing-appropriate tasks
+      if (node.validated_step === true) score += 1000; // Incremental progression validated
+      
+      // PACING BONUS: Matches recommended step size
+      const stepSizeMatch = this.matchesRecommendedStepSize(node, pacingContext.recommended_step_size);
+      if (stepSizeMatch) score += 500;
+      
+      // CAPABILITY ALIGNMENT: Matches current capability level
+      const capabilityMatch = this.matchesCapabilityLevel(node, pacingContext.current_capability);
+      if (capabilityMatch) score += 400;
+      
+      // MOMENTUM CONSIDERATION: Aligns with momentum status
+      if (pacingContext.momentum_status?.status === 'accelerating' && node.magnitude >= 6) score += 300;
+      if (pacingContext.momentum_status?.status === 'struggling' && node.magnitude <= 4) score += 300;
+      
+      // Original scoring factors (lower priority)
+      if (node.branch_type === 'interest_driven' || node.interest_based) score += 200;
+      if (node.priority === 'critical') score += 150;
+      if (node.priority === 'high') score += 100;
+      
+      return { ...node, score };
+    });
+    
+    return scoredNodes.sort((a, b) => b.score - a.score)[0];
+  }
+  
+  matchesRecommendedStepSize(node, recommendedStepSize) {
+    const nodeTime = this.parseTimeAvailable(node.estimated_time);
+    
+    if (recommendedStepSize.size === 'tiny' && nodeTime <= 20) return true;
+    if (recommendedStepSize.size === 'small' && nodeTime <= 35 && nodeTime > 15) return true;
+    if (recommendedStepSize.size === 'medium' && nodeTime <= 60 && nodeTime > 30) return true;
+    
+    return false;
+  }
+  
+  matchesCapabilityLevel(node, currentCapability) {
+    const taskDifficulty = node.magnitude || 5;
+    const userAvgDifficulty = currentCapability.avg_difficulty || 3;
+    
+    // Perfect match: task difficulty within 1 point of user's average
+    return Math.abs(taskDifficulty - userAvgDifficulty) <= 1;
   }
 
   parseTimeAvailable(timeStr) {
@@ -2560,6 +2617,949 @@ class ForestServer {
       hta.last_evolution = new Date().toISOString();
       await this.saveProjectData(projectId, 'hta.json', hta);
     }
+  }
+
+  // Helper function to get active HTA tree
+  // DEDUCTIVE REASONING ENGINE - analyzes patterns and draws logical conclusions
+  async generateLogicalDeductions(projectId, completionHistory = []) {
+    try {
+      const projectConfig = await this.loadProjectData(projectId, 'config.json');
+      const learningHistory = await this.loadProjectData(projectId, 'learning_history.json') || {
+        completed_topics: [],
+        knowledge_gaps: [],
+        insights: []
+      };
+      
+      const deductiveAnalysis = {
+        patterns_detected: this.detectCompletionPatterns(completionHistory, learningHistory),
+        logical_chains: this.buildLogicalChains(completionHistory, projectConfig),
+        strategic_implications: this.deduceStrategicImplications(completionHistory, projectConfig),
+        competitive_advantages: this.identifyCompetitiveAdvantages(completionHistory, projectConfig),
+        knowledge_synthesis: this.synthesizeKnowledgeConnections(learningHistory),
+        contradiction_analysis: this.detectContradictions(completionHistory, learningHistory),
+        opportunity_identification: this.identifyEmergentOpportunities(completionHistory, projectConfig),
+        confidence_scores: this.calculateDeductionConfidence(completionHistory),
+        recommended_pivots: this.recommendStrategicPivots(completionHistory, projectConfig),
+        next_logical_focus: this.deduceNextLogicalFocus(completionHistory, projectConfig)
+      };
+      
+      return {
+        timestamp: new Date().toISOString(),
+        project_goal: projectConfig.goal,
+        analysis_depth: completionHistory.length,
+        deductive_reasoning: deductiveAnalysis,
+        system_intelligence_level: this.assessSystemIntelligence(deductiveAnalysis),
+        actionable_insights: this.generateActionableInsights(deductiveAnalysis)
+      };
+    } catch (error) {
+      await this.logError('generateLogicalDeductions', error, { projectId });
+      return this.getDefaultDeductiveAnalysis(projectId);
+    }
+  }
+  
+  detectCompletionPatterns(completionHistory, learningHistory) {
+    const patterns = [];
+    
+    // Pattern 1: Learning velocity and depth correlation
+    const avgLearningDepth = completionHistory.reduce((sum, c) => sum + (c.learned?.length || 0), 0) / Math.max(completionHistory.length, 1);
+    if (avgLearningDepth > 100) {
+      patterns.push({
+        type: 'high_depth_learning',
+        evidence: `Average learning depth: ${Math.round(avgLearningDepth)} characters`,
+        implication: 'User demonstrates deep analytical thinking and comprehensive understanding',
+        confidence: 0.9
+      });
+    }
+    
+    // Pattern 2: Breakthrough frequency analysis
+    const breakthroughRate = completionHistory.filter(c => c.breakthrough).length / Math.max(completionHistory.length, 1);
+    if (breakthroughRate > 0.3) {
+      patterns.push({
+        type: 'high_breakthrough_rate',
+        evidence: `${Math.round(breakthroughRate * 100)}% breakthrough rate`,
+        implication: 'User consistently generates novel insights and strategic realizations',
+        confidence: 0.85
+      });
+    }
+    
+    // Pattern 3: Strategic thinking indicators
+    const strategicKeywords = ['bridge', 'pathway', 'leverage', 'advantage', 'pivot', 'strategy'];
+    const strategicMentions = completionHistory.reduce((count, c) => {
+      const content = (c.learned || '') + (c.outcome || '');
+      return count + strategicKeywords.filter(keyword => 
+        content.toLowerCase().includes(keyword)
+      ).length;
+    }, 0);
+    
+    if (strategicMentions > completionHistory.length) {
+      patterns.push({
+        type: 'strategic_thinking_pattern',
+        evidence: `${strategicMentions} strategic concepts across ${completionHistory.length} completions`,
+        implication: 'User naturally thinks in strategic frameworks and systematic approaches',
+        confidence: 0.8
+      });
+    }
+    
+    // Pattern 4: Knowledge integration ability
+    const integrationIndicators = learningHistory.insights?.filter(insight => 
+      insight.feedback?.includes('insight') || insight.feedback?.includes('connection')
+    ).length || 0;
+    
+    if (integrationIndicators > 1) {
+      patterns.push({
+        type: 'knowledge_integration',
+        evidence: `${integrationIndicators} documented knowledge connections`,
+        implication: 'User excels at connecting disparate concepts into coherent frameworks',
+        confidence: 0.75
+      });
+    }
+    
+    return patterns;
+  }
+  
+  buildLogicalChains(completionHistory, projectConfig) {
+    const chains = [];
+    
+    // Logical Chain 1: Credential + Experience = Unique Advantage
+    const credentials = projectConfig.existing_credentials || [];
+    const psychologyBackground = credentials.some(c => c.subject_area?.toLowerCase().includes('psychology'));
+    const uxBackground = credentials.some(c => c.subject_area?.toLowerCase().includes('ux') || c.subject_area?.toLowerCase().includes('design'));
+    
+    if (psychologyBackground && completionHistory.length > 0) {
+      const fanAnalysisEvidence = completionHistory.some(c => 
+        (c.learned || '').toLowerCase().includes('fan') || 
+        (c.learned || '').toLowerCase().includes('audience')
+      );
+      
+      if (fanAnalysisEvidence) {
+        chains.push({
+          premise_1: 'User has psychology degree',
+          premise_2: 'User demonstrates fan behavior analysis',
+          premise_3: 'Entertainment industry needs audience insight',
+          logical_connection: 'IF psychology expertise + fan analysis THEN unique market positioning',
+          conclusion: 'User possesses rare combination: psychological training + insider fan perspective',
+          confidence: 0.9,
+          strategic_value: 'high'
+        });
+      }
+    }
+    
+    // Logical Chain 2: Bridge Strategy Validation
+    const bridgeStrategyEvidence = completionHistory.some(c => 
+      (c.learned || '').toLowerCase().includes('bridge') || 
+      (c.learned || '').toLowerCase().includes('marketing')
+    );
+    
+    if (bridgeStrategyEvidence) {
+      chains.push({
+        premise_1: 'User identified marketing as bridge pathway',
+        premise_2: 'User has relevant foundational skills',
+        premise_3: 'Direct industry entry is extremely difficult',
+        logical_connection: 'IF bridge strategy + existing skills THEN higher probability of success',
+        conclusion: 'Adjacent industry pivot approach is strategically sound',
+        confidence: 0.85,
+        strategic_value: 'critical'
+      });
+    }
+    
+    return chains;
+  }
+  
+  deduceStrategicImplications(completionHistory, projectConfig) {
+    const implications = [];
+    
+    // Implication 1: Competitive Differentiation
+    const uniqueInsights = completionHistory.filter(c => 
+      c.breakthrough || (c.learned?.length || 0) > 150
+    ).length;
+    
+    if (uniqueInsights >= 2) {
+      implications.push({
+        category: 'competitive_positioning',
+        insight: 'User consistently generates unique analytical perspectives',
+        strategic_implication: 'Natural differentiation through depth of analysis and novel insights',
+        business_impact: 'Can provide perspectives competitors cannot replicate',
+        confidence: 0.8
+      });
+    }
+    
+    // Implication 2: Market Timing
+    const currentYear = new Date().getFullYear();
+    implications.push({
+      category: 'market_timing',
+      insight: 'Entertainment industry undergoing rapid digital transformation',
+      strategic_implication: 'Psychology + digital marketing skills increasingly valuable',
+      business_impact: 'Timing favors interdisciplinary approaches to fan engagement',
+      confidence: 0.75
+    });
+    
+    return implications;
+  }
+  
+  identifyCompetitiveAdvantages(completionHistory, projectConfig) {
+    const advantages = [];
+    
+    const credentials = projectConfig.existing_credentials || [];
+    const psychologyBackground = credentials.find(c => c.subject_area?.toLowerCase().includes('psychology'));
+    
+    if (psychologyBackground) {
+      advantages.push({
+        advantage_type: 'educational_foundation',
+        description: 'Formal psychology training in human behavior analysis',
+        market_rarity: 'Rare in entertainment marketing',
+        application: 'Fan psychology, audience segmentation, engagement optimization',
+        value_proposition: 'Deeper audience insight than demographic-only approaches',
+        confidence: 0.9
+      });
+    }
+    
+    // Fan expertise advantage
+    const fanEvidence = completionHistory.some(c => 
+      (c.learned || '').includes('fan') || (c.outcome || '').includes('audience')
+    );
+    
+    if (fanEvidence) {
+      advantages.push({
+        advantage_type: 'insider_perspective',
+        description: 'Authentic fan perspective with analytical framework',
+        market_rarity: 'Most marketers are outsiders to fan communities',
+        application: 'Authentic fan engagement, community building, content strategy',
+        value_proposition: 'Avoids tone-deaf marketing that alienates core audience',
+        confidence: 0.85
+      });
+    }
+    
+    return advantages;
+  }
+  
+  synthesizeKnowledgeConnections(learningHistory) {
+    const connections = [];
+    const insights = learningHistory.insights || [];
+    const knowledgeGaps = learningHistory.knowledge_gaps || [];
+    
+    // Connection 1: Insight to Gap Resolution
+    insights.forEach(insight => {
+      const relatedGaps = knowledgeGaps.filter(gap => {
+        const insightContent = insight.feedback?.toLowerCase() || '';
+        const gapContent = gap.question?.toLowerCase() || '';
+        return insightContent.includes('marketing') && gapContent.includes('marketing');
+      });
+      
+      if (relatedGaps.length > 0) {
+        connections.push({
+          type: 'insight_gap_resolution',
+          insight_source: insight.feedback?.substring(0, 100) + '...',
+          resolves_gaps: relatedGaps.length,
+          synthesis: 'Previous insights provide framework for addressing current knowledge gaps',
+          confidence: 0.7
+        });
+      }
+    });
+    
+    return connections;
+  }
+  
+  detectContradictions(completionHistory, learningHistory) {
+    // For now, return empty array - contradiction detection is complex
+    // Future enhancement: detect when learning contradicts previous understanding
+    return [];
+  }
+  
+  identifyEmergentOpportunities(completionHistory, projectConfig) {
+    const opportunities = [];
+    
+    // Opportunity 1: Bridge strategy maturation
+    const bridgeEvidence = completionHistory.some(c => 
+      (c.learned || '').toLowerCase().includes('bridge') ||
+      (c.learned || '').toLowerCase().includes('marketing')
+    );
+    
+    if (bridgeEvidence && completionHistory.length >= 2) {
+      opportunities.push({
+        opportunity_type: 'strategic_pivot_readiness',
+        description: 'Bridge strategy sufficiently developed to begin implementation',
+        timing: 'immediate',
+        requirements: ['Digital marketing skill building', 'Portfolio development'],
+        potential_impact: 'High - enables career transition execution',
+        confidence: 0.8
+      });
+    }
+    
+    return opportunities;
+  }
+  
+  calculateDeductionConfidence(completionHistory) {
+    const dataPoints = completionHistory.length;
+    const breakthroughs = completionHistory.filter(c => c.breakthrough).length;
+    const avgLearningDepth = completionHistory.reduce((sum, c) => sum + (c.learned?.length || 0), 0) / Math.max(dataPoints, 1);
+    
+    let confidence = 0.5; // Base confidence
+    
+    // More data points = higher confidence
+    if (dataPoints >= 3) confidence += 0.2;
+    if (dataPoints >= 5) confidence += 0.1;
+    
+    // Breakthroughs indicate quality insights
+    if (breakthroughs >= 1) confidence += 0.15;
+    if (breakthroughs >= 2) confidence += 0.1;
+    
+    // Deep learning indicates thorough analysis
+    if (avgLearningDepth > 100) confidence += 0.1;
+    
+    return Math.min(confidence, 0.95); // Cap at 95%
+  }
+  
+  recommendStrategicPivots(completionHistory, projectConfig) {
+    const pivots = [];
+    
+    // Pivot recommendation based on bridge strategy evidence
+    const marketingEvidence = completionHistory.some(c => 
+      (c.learned || '').toLowerCase().includes('marketing')
+    );
+    
+    if (marketingEvidence) {
+      pivots.push({
+        pivot_type: 'focus_shift',
+        from: 'General entertainment industry exploration',
+        to: 'Specialized entertainment marketing development',
+        rationale: 'Bridge strategy identified and validated through completion analysis',
+        implementation: 'Shift learning focus to digital marketing fundamentals',
+        timeline: 'Next 1-2 tasks',
+        confidence: 0.85
+      });
+    }
+    
+    return pivots;
+  }
+  
+  deduceNextLogicalFocus(completionHistory, projectConfig) {
+    // Analyze completion patterns to deduce what should be focused on next
+    const recentLearning = completionHistory.slice(-2);
+    const bridgeStrategyEvidence = recentLearning.some(c => 
+      (c.learned || '').toLowerCase().includes('bridge') ||
+      (c.learned || '').toLowerCase().includes('marketing')
+    );
+    
+    if (bridgeStrategyEvidence) {
+      return {
+        focus_area: 'Digital Marketing Skill Building',
+        reasoning: 'Bridge strategy established, now need foundational marketing skills',
+        priority: 'high',
+        confidence: 0.9
+      };
+    }
+    
+    return {
+      focus_area: 'Continue current strategic exploration',
+      reasoning: 'Insufficient evidence to recommend major focus shift',
+      priority: 'medium',
+      confidence: 0.6
+    };
+  }
+  
+  assessSystemIntelligence(deductiveAnalysis) {
+    const patterns = deductiveAnalysis.patterns_detected?.length || 0;
+    const chains = deductiveAnalysis.logical_chains?.length || 0;
+    const implications = deductiveAnalysis.strategic_implications?.length || 0;
+    
+    const intelligenceScore = (patterns * 0.3) + (chains * 0.4) + (implications * 0.3);
+    
+    if (intelligenceScore >= 3) return 'high';
+    if (intelligenceScore >= 2) return 'medium';
+    return 'developing';
+  }
+  
+  generateActionableInsights(deductiveAnalysis) {
+    const insights = [];
+    
+    // Convert logical chains to actionable insights
+    deductiveAnalysis.logical_chains?.forEach(chain => {
+      if (chain.confidence >= 0.8) {
+        insights.push({
+          insight: chain.conclusion,
+          action: `Leverage this advantage: ${chain.logical_connection}`,
+          priority: chain.strategic_value === 'critical' ? 'high' : 'medium',
+          confidence: chain.confidence
+        });
+      }
+    });
+    
+    // Convert opportunities to actions
+    deductiveAnalysis.opportunity_identification?.forEach(opp => {
+      if (opp.timing === 'immediate') {
+        insights.push({
+          insight: opp.description,
+          action: `Focus on: ${opp.requirements?.join(', ')}`,
+          priority: 'high',
+          confidence: opp.confidence
+        });
+      }
+    });
+    
+    return insights;
+  }
+  
+  getDefaultDeductiveAnalysis(projectId) {
+    return {
+      timestamp: new Date().toISOString(),
+      project_goal: 'Unknown',
+      analysis_depth: 0,
+      deductive_reasoning: {
+        patterns_detected: [],
+        logical_chains: [],
+        strategic_implications: [],
+        competitive_advantages: [],
+        knowledge_synthesis: [],
+        contradiction_analysis: [],
+        opportunity_identification: [],
+        confidence_scores: 0.5,
+        recommended_pivots: [],
+        next_logical_focus: { focus_area: 'Build more completion data', reasoning: 'Insufficient data for analysis', priority: 'medium', confidence: 0.3 }
+      },
+      system_intelligence_level: 'developing',
+      actionable_insights: []
+    };
+  }
+
+  // COMPREHENSIVE PACING ANALYSIS - provides rich context for perfect task generation
+  async generatePacingContext(projectId, recentCompletions = []) {
+    try {
+      // Load project configuration (may include pacing preferences, constraints, etc.)
+      const projectConfig = (await this.loadProjectData(projectId, 'config.json')) || {};
+
+      // Build a minimal learningHistory structure so existing helper methods can operate
+      const learningHistory = {
+        completed_topics: recentCompletions
+      };
+
+      const completionHistory = learningHistory.completed_topics || [];
+      
+      return {
+        // Current capability assessment
+        current_capability: this.assessCurrentCapability(recentCompletions),
+        learning_velocity: this.calculateLearningVelocity(completionHistory),
+        skill_acceleration: this.calculateSkillAcceleration(completionHistory),
+        
+        // Difficulty and challenge patterns
+        difficulty_trend: this.analyzeDifficultyTrend(recentCompletions),
+        optimal_difficulty: this.calculateOptimalDifficulty(recentCompletions),
+        struggle_patterns: this.identifyStrugglePatterns(completionHistory),
+        breakthrough_patterns: this.identifyBreakthroughPatterns(completionHistory),
+        
+        // Energy and engagement patterns
+        energy_patterns: this.analyzeEnergyPatterns(recentCompletions),
+        engagement_patterns: this.analyzeEngagementPatterns(recentCompletions),
+        optimal_duration: this.calculateOptimalDuration(completionHistory, projectConfig),
+        
+        // Pacing health indicators
+        pacing_warnings: this.detectPacingWarnings(completionHistory),
+        momentum_status: this.assessMomentumStatus(recentCompletions),
+        readiness_level: this.assessReadinessLevel(completionHistory, projectConfig),
+        
+        // Strategic context
+        goal_alignment: projectConfig.goal,
+        knowledge_level: projectConfig.knowledge_level || 0,
+        time_constraints: projectConfig.constraints?.time_constraints,
+        focus_preferences: projectConfig.focus_duration,
+        
+        // Next step sizing recommendations
+        recommended_step_size: this.recommendStepSize(recentCompletions, projectConfig),
+        complexity_ceiling: this.calculateComplexityCeiling(completionHistory),
+        challenge_floor: this.calculateChallengeFloor(completionHistory)
+      };
+    } catch (error) {
+      await this.logError('generatePacingContext', error, { projectId });
+      return this.getDefaultPacingContext(projectId);
+    }
+  }
+  
+  assessCurrentCapability(recentCompletions) {
+    if (!recentCompletions || recentCompletions.length === 0) {
+      return { level: 'beginner', confidence: 'low', trend: 'unknown' };
+    }
+    
+    const avgDifficulty = recentCompletions.reduce((sum, c) => sum + (c.difficulty || 3), 0) / recentCompletions.length;
+    const avgLearning = recentCompletions.filter(c => c.learned && c.learned.length > 30).length / recentCompletions.length;
+    const breakthroughs = recentCompletions.filter(c => c.breakthrough).length;
+    
+    let level = 'beginner';
+    if (avgDifficulty >= 3.5 && avgLearning >= 0.7) level = 'intermediate';
+    if (avgDifficulty >= 4 && avgLearning >= 0.8 && breakthroughs >= 1) level = 'advanced';
+    
+    const trend = this.calculateCapabilityTrend(recentCompletions);
+    const confidence = avgLearning >= 0.6 ? 'high' : avgLearning >= 0.3 ? 'medium' : 'low';
+    
+    return { level, confidence, trend, avg_difficulty: avgDifficulty, learning_rate: avgLearning };
+  }
+  
+  calculateLearningVelocity(completionHistory) {
+    if (completionHistory.length < 2) return { rate: 'unknown', pattern: 'insufficient_data' };
+    
+    const recentWeek = completionHistory.filter(c => {
+      const completionDate = new Date(c.date);
+      const weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      return completionDate >= weekAgo;
+    });
+    
+    const tasksPerWeek = recentWeek.length;
+    const avgLearningDepth = recentWeek.reduce((sum, c) => sum + (c.learned?.length || 0), 0) / Math.max(recentWeek.length, 1);
+    
+    let rate = 'slow';
+    if (tasksPerWeek >= 5 && avgLearningDepth >= 50) rate = 'fast';
+    else if (tasksPerWeek >= 3 && avgLearningDepth >= 30) rate = 'steady';
+    else if (tasksPerWeek >= 1) rate = 'moderate';
+    
+    return { 
+      rate, 
+      tasks_per_week: tasksPerWeek, 
+      avg_learning_depth: avgLearningDepth,
+      pattern: this.identifyLearningPattern(completionHistory)
+    };
+  }
+  
+  analyzeDifficultyTrend(recentCompletions) {
+    if (!recentCompletions || recentCompletions.length < 2) {
+      return { trend: 'unknown', current_level: 3, recommendation: 'start_moderate' };
+    }
+    
+    const difficulties = recentCompletions.map(c => c.difficulty || 3);
+    const avgRecent = difficulties.slice(-3).reduce((a, b) => a + b, 0) / Math.min(difficulties.length, 3);
+    const avgEarlier = difficulties.slice(0, -3).reduce((a, b) => a + b, 0) / Math.max(difficulties.length - 3, 1);
+    
+    let trend = 'stable';
+    if (avgRecent > avgEarlier + 0.5) trend = 'increasing';
+    else if (avgRecent < avgEarlier - 0.5) trend = 'decreasing';
+    
+    let recommendation = 'maintain';
+    if (avgRecent >= 4.5) recommendation = 'reduce_difficulty';
+    else if (avgRecent <= 2 && recentCompletions.slice(-2).every(c => c.learned?.length > 40)) recommendation = 'increase_difficulty';
+    
+    return { 
+      trend, 
+      current_level: avgRecent, 
+      recommendation,
+      struggling: avgRecent >= 4 && recentCompletions.slice(-2).some(c => (c.learned?.length || 0) < 20)
+    };
+  }
+  
+  detectPacingWarnings(completionHistory) {
+    const warnings = [];
+    const recent = completionHistory.slice(-5);
+    
+    // Warning: Consistent difficulty 4+ without learning
+    if (recent.length >= 3 && recent.slice(-3).every(c => c.difficulty >= 4 && (c.learned?.length || 0) < 30)) {
+      warnings.push({
+        type: 'overwhelm_risk',
+        message: 'User struggling with recent tasks - reduce complexity',
+        severity: 'high'
+      });
+    }
+    
+    // Warning: Consistent difficulty 1-2 with minimal engagement
+    if (recent.length >= 3 && recent.slice(-3).every(c => c.difficulty <= 2 && (c.learned?.length || 0) < 20)) {
+      warnings.push({
+        type: 'boredom_risk',
+        message: 'Tasks may be too easy - increase challenge',
+        severity: 'medium'
+      });
+    }
+    
+    // Warning: No completions in last week
+    const lastWeek = completionHistory.filter(c => {
+      const completionDate = new Date(c.date);
+      const weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      return completionDate >= weekAgo;
+    });
+    
+    if (lastWeek.length === 0 && completionHistory.length > 0) {
+      warnings.push({
+        type: 'momentum_loss',
+        message: 'No activity in past week - restart with easy task',
+        severity: 'high'
+      });
+    }
+    
+    return warnings;
+  }
+  
+  recommendStepSize(recentCompletions, projectConfig) {
+    const capability = this.assessCurrentCapability(recentCompletions);
+    const focusDuration = this.parseTimeAvailable(projectConfig.focus_duration || '25 minutes');
+    
+    let baseSize = 'small';
+    
+    // Adjust based on capability
+    if (capability.level === 'advanced' && capability.confidence === 'high') {
+      baseSize = 'medium';
+    } else if (capability.level === 'beginner' || capability.confidence === 'low') {
+      baseSize = 'tiny';
+    }
+    
+    // Adjust based on recent struggles
+    if (recentCompletions.some(c => c.difficulty >= 4)) {
+      baseSize = baseSize === 'medium' ? 'small' : 'tiny';
+    }
+    
+    // Adjust based on focus duration
+    if (focusDuration <= 15) {
+      baseSize = 'tiny';
+    } else if (focusDuration >= 60) {
+      baseSize = baseSize === 'tiny' ? 'small' : 'medium';
+    }
+    
+    return {
+      size: baseSize,
+      reasoning: this.explainStepSizeReasoning(capability, recentCompletions, focusDuration)
+    };
+  }
+  
+  explainStepSizeReasoning(capability, recentCompletions, focusDuration) {
+    const reasons = [];
+    
+    if (capability.level === 'beginner') reasons.push('beginner level');
+    if (capability.confidence === 'low') reasons.push('low confidence');
+    if (recentCompletions.some(c => c.difficulty >= 4)) reasons.push('recent struggles');
+    if (focusDuration <= 15) reasons.push('short focus duration');
+    if (capability.level === 'advanced' && capability.confidence === 'high') reasons.push('advanced capability');
+    
+    return reasons.join(', ') || 'standard progression';
+  }
+  
+  getDefaultPacingContext(projectId) {
+    return {
+      current_capability: { level: 'beginner', confidence: 'medium', trend: 'unknown' },
+      recommended_step_size: { size: 'small', reasoning: 'default for new project' },
+      pacing_warnings: [],
+      difficulty_trend: { trend: 'unknown', current_level: 3, recommendation: 'start_moderate' },
+      goal_alignment: 'Unknown goal'
+    };
+  }
+
+  // INCREMENTAL PROGRESSION VALIDATION - prevents chapter jumping
+  validateIncrementalProgression(completedBlock, learned, nextQuestions, projectConfig, completionContext = {}) {
+    const { difficultyRating = 3 } = completionContext;
+    const validatedTasks = [];
+    
+    // Determine what the SMALLEST logical next step should be
+    const currentCapability = this.assessCurrentCapability(completedBlock, learned, difficultyRating);
+    const nextStepSize = this.calculateOptimalStepSize(currentCapability, difficultyRating, projectConfig);
+    
+    // Generate only ONE small step ahead, not multiple chapters
+    const incrementalTask = this.generateIncrementalNextTask(completedBlock, learned, nextQuestions, nextStepSize, projectConfig);
+    
+    if (incrementalTask) {
+      validatedTasks.push(incrementalTask);
+    }
+    
+    // Only add research task if it's truly the next logical step
+    if (nextQuestions && this.shouldResearchNext(completedBlock, learned, nextQuestions)) {
+      const researchTask = this.generateIncrementalResearchTask(completedBlock, nextQuestions, nextStepSize);
+      if (researchTask) {
+        validatedTasks.push(researchTask);
+      }
+    }
+    
+    return validatedTasks;
+  }
+  
+  assessCurrentCapability(completedBlock, learned, difficultyRating) {
+    // Assess what user can actually do now based on completion
+    let capability = 'beginner';
+    
+    if (difficultyRating <= 2 && learned && learned.length > 50) {
+      capability = 'comfortable'; // Easy task with good learning
+    } else if (difficultyRating === 3 && learned) {
+      capability = 'progressing'; // Normal difficulty with learning
+    } else if (difficultyRating >= 4) {
+      capability = 'struggling'; // Hard task, need easier steps
+    }
+    
+    return capability;
+  }
+  
+  calculateOptimalStepSize(capability, difficultyRating, projectConfig) {
+    // Calculate how big the next step should be
+    const focusDuration = this.parseTimeAvailable(projectConfig.focus_duration || '25 minutes');
+    
+    let stepSize = 'small';
+    
+    if (capability === 'struggling' || difficultyRating >= 4) {
+      stepSize = 'tiny'; // Much smaller steps
+    } else if (capability === 'comfortable' && difficultyRating <= 2) {
+      stepSize = 'medium'; // Can handle slightly bigger step
+    }
+    
+    // Adjust for focus duration
+    if (focusDuration <= 15) {
+      stepSize = 'tiny'; // Micro-learning
+    }
+    
+    return stepSize;
+  }
+  
+  generateIncrementalNextTask(completedBlock, learned, nextQuestions, stepSize, projectConfig) {
+    const stepSizeMap = {
+      'tiny': { magnitude: 4, time: '15 minutes', complexity: 'one small skill' },
+      'small': { magnitude: 5, time: '25 minutes', complexity: 'build on what you just learned' },
+      'medium': { magnitude: 6, time: '35 minutes', complexity: 'apply knowledge in new context' }
+    };
+    
+    const step = stepSizeMap[stepSize] || stepSizeMap['small'];
+    
+    // Generate task that builds directly on what was just completed
+    const taskTitle = this.generateIncrementalTitle(completedBlock.action, learned, stepSize);
+    const taskDescription = this.generateIncrementalDescription(completedBlock.action, learned, step.complexity);
+    
+    return {
+      id: this.generateId(),
+      title: taskTitle,
+      description: taskDescription,
+      branch_type: completedBlock.strategic_purpose || 'practical',
+      estimated_time: step.time,
+      priority: 'high',
+      status: 'ready',
+      knowledge_level: 'intermediate',
+      magnitude: step.magnitude,
+      prerequisites: [completedBlock.id],
+      learning_outcomes: [
+        `Apply what you learned from: ${completedBlock.action}`,
+        'Take one small step forward',
+        'Build confidence and momentum'
+      ],
+      generated_from: 'incremental_progression',
+      validated_step: true
+    };
+  }
+  
+  generateIncrementalTitle(previousAction, learned, stepSize) {
+    // Create titles that clearly show progression
+    const actionKeyword = previousAction.split(' ')[0] || 'Continue';
+    
+    if (stepSize === 'tiny') {
+      return `Practice: ${actionKeyword} Basics`;
+    } else if (stepSize === 'small') {
+      return `Apply: ${actionKeyword} Knowledge`;
+    } else {
+      return `Expand: ${actionKeyword} Skills`;
+    }
+  }
+  
+  generateIncrementalDescription(previousAction, learned, complexity) {
+    return `Now that you've completed "${previousAction}", ${complexity}. This builds directly on your recent learning without jumping ahead.`;
+  }
+  
+  shouldResearchNext(completedBlock, learned, nextQuestions) {
+    // Only research if it's truly the logical next step
+    if (!nextQuestions || nextQuestions.length < 20) {
+      return false; // Too vague to research
+    }
+    
+    // Research is appropriate if:
+    // 1. User showed good comprehension (learned something substantial)
+    // 2. Questions are specific enough to research
+    // 3. Not jumping too far ahead
+    
+    return learned && learned.length > 30 && nextQuestions.includes('how') || nextQuestions.includes('what') || nextQuestions.includes('why');
+  }
+  
+  generateIncrementalResearchTask(completedBlock, nextQuestions, stepSize) {
+    const timeMap = {
+      'tiny': '15 minutes',
+      'small': '20 minutes', 
+      'medium': '30 minutes'
+    };
+    
+    return {
+      id: this.generateId(),
+      title: `Research: Next Step for ${completedBlock.action.split(' ').slice(0, 3).join(' ')}`,
+      description: `Research this specific question that emerged: ${nextQuestions.substring(0, 100)}...`,
+      branch_type: 'research',
+      estimated_time: timeMap[stepSize] || '20 minutes',
+      priority: 'medium',
+      status: 'ready',
+      knowledge_level: 'intermediate',
+      magnitude: 5,
+      prerequisites: [completedBlock.id],
+      learning_outcomes: [
+        `Answer: ${nextQuestions.substring(0, 50)}...`,
+        'Fill specific knowledge gap',
+        'Prepare for next practical step'
+      ],
+      generated_from: 'incremental_research',
+      validated_step: true
+    };
+  }
+
+  async analyzeReasoning(includeDetailedAnalysis = true) {
+    const projectId = await this.requireActiveProject();
+    const learningHistory = await this.loadProjectData(projectId, 'learning_history.json') || {
+      completed_topics: [],
+      knowledge_gaps: [],
+      insights: []
+    };
+    
+    const completionHistory = learningHistory.completed_topics || [];
+    
+    if (completionHistory.length === 0) {
+      return {
+        content: [{
+          type: 'text',
+          text: `🧠 Deductive Reasoning Analysis\n\n⚠️ Insufficient data for analysis. Complete at least 1 task to enable reasoning capabilities.\n\nThe system will analyze:\n• Completion patterns\n• Logical chains\n• Strategic implications\n• Competitive advantages\n• Emergent opportunities`
+        }]
+      };
+    }
+    
+    const reasoning = await this.generateLogicalDeductions(projectId, completionHistory);
+    
+    let response = `🧠 **DEDUCTIVE REASONING ANALYSIS**\n\n`;
+    response += `📊 **Analysis Depth:** ${reasoning.analysis_depth} completions\n`;
+    response += `🎯 **Goal:** ${reasoning.project_goal}\n`;
+    response += `🤖 **System Intelligence:** ${reasoning.system_intelligence_level}\n\n`;
+    
+    // Patterns Detected
+    if (reasoning.deductive_reasoning.patterns_detected.length > 0) {
+      response += `🔍 **PATTERNS DETECTED:**\n`;
+      reasoning.deductive_reasoning.patterns_detected.forEach(pattern => {
+        response += `• **${pattern.type}:** ${pattern.implication}\n`;
+        response += `  Evidence: ${pattern.evidence} (${Math.round(pattern.confidence * 100)}% confidence)\n`;
+      });
+      response += `\n`;
+    }
+    
+    // Logical Chains
+    if (reasoning.deductive_reasoning.logical_chains.length > 0) {
+      response += `🔗 **LOGICAL REASONING CHAINS:**\n`;
+      reasoning.deductive_reasoning.logical_chains.forEach((chain, index) => {
+        response += `\n**Chain ${index + 1}** (${Math.round(chain.confidence * 100)}% confidence, ${chain.strategic_value} value):\n`;
+        response += `• ${chain.premise_1}\n`;
+        response += `• ${chain.premise_2}\n`;
+        response += `• ${chain.premise_3}\n`;
+        response += `• **Logic:** ${chain.logical_connection}\n`;
+        response += `• **Conclusion:** ${chain.conclusion}\n`;
+      });
+      response += `\n`;
+    }
+    
+    // Strategic Implications
+    if (reasoning.deductive_reasoning.strategic_implications.length > 0) {
+      response += `💡 **STRATEGIC IMPLICATIONS:**\n`;
+      reasoning.deductive_reasoning.strategic_implications.forEach(impl => {
+        response += `• **${impl.category}:** ${impl.strategic_implication}\n`;
+        response += `  Business Impact: ${impl.business_impact}\n`;
+      });
+      response += `\n`;
+    }
+    
+    // Competitive Advantages
+    if (reasoning.deductive_reasoning.competitive_advantages.length > 0) {
+      response += `🏆 **COMPETITIVE ADVANTAGES IDENTIFIED:**\n`;
+      reasoning.deductive_reasoning.competitive_advantages.forEach(adv => {
+        response += `• **${adv.advantage_type}:** ${adv.description}\n`;
+        response += `  Market Rarity: ${adv.market_rarity}\n`;
+        response += `  Value Proposition: ${adv.value_proposition}\n`;
+      });
+      response += `\n`;
+    }
+    
+    // Emergent Opportunities
+    if (reasoning.deductive_reasoning.opportunity_identification.length > 0) {
+      response += `🚀 **EMERGENT OPPORTUNITIES:**\n`;
+      reasoning.deductive_reasoning.opportunity_identification.forEach(opp => {
+        response += `• **${opp.opportunity_type}:** ${opp.description}\n`;
+        response += `  Timing: ${opp.timing}\n`;
+        response += `  Requirements: ${opp.requirements?.join(', ')}\n`;
+        response += `  Impact: ${opp.potential_impact}\n`;
+      });
+      response += `\n`;
+    }
+    
+    // Strategic Pivots
+    if (reasoning.deductive_reasoning.recommended_pivots.length > 0) {
+      response += `🔄 **RECOMMENDED STRATEGIC PIVOTS:**\n`;
+      reasoning.deductive_reasoning.recommended_pivots.forEach(pivot => {
+        response += `• **From:** ${pivot.from}\n`;
+        response += `• **To:** ${pivot.to}\n`;
+        response += `• **Rationale:** ${pivot.rationale}\n`;
+        response += `• **Implementation:** ${pivot.implementation}\n`;
+      });
+      response += `\n`;
+    }
+    
+    // Next Logical Focus
+    const nextFocus = reasoning.deductive_reasoning.next_logical_focus;
+    response += `🎯 **DEDUCED NEXT FOCUS:**\n`;
+    response += `• **Area:** ${nextFocus.focus_area}\n`;
+    response += `• **Reasoning:** ${nextFocus.reasoning}\n`;
+    response += `• **Priority:** ${nextFocus.priority}\n`;
+    response += `• **Confidence:** ${Math.round(nextFocus.confidence * 100)}%\n\n`;
+    
+    // Actionable Insights
+    if (reasoning.actionable_insights.length > 0) {
+      response += `✅ **ACTIONABLE INSIGHTS:**\n`;
+      reasoning.actionable_insights.forEach(insight => {
+        response += `• **${insight.priority.toUpperCase()} PRIORITY:** ${insight.insight}\n`;
+        response += `  Action: ${insight.action}\n`;
+      });
+      response += `\n`;
+    }
+    
+    response += `---\n**Analysis Confidence:** ${Math.round(reasoning.deductive_reasoning.confidence_scores * 100)}%\n`;
+    response += `**Timestamp:** ${reasoning.timestamp}`;
+    
+    return {
+      content: [{
+        type: 'text',
+        text: response
+      }]
+    };
+  }
+
+  // Helper function to check if task is relevant to learning path
+  isTaskRelevantToPath(task, pathName) {
+    if (!pathName || pathName === 'general') return true;
+    return task.path_specific === true || 
+           task.branch_type === pathName || 
+           task.title.toLowerCase().includes(pathName.toLowerCase());
+  }
+
+  // Helper function to detect emergent opportunities
+  detectEmergentOpportunities(completedTask, completionContext) {
+    // Placeholder for opportunity detection logic
+    return [];
+  }
+
+  // Helper function to invalidate unnecessary tasks
+  invalidateUnnecessaryTasks(frontierNodes, completedTask, completionContext) {
+    // Return the frontier nodes as-is for now
+    return frontierNodes;
+  }
+
+  // Helper function to generate smart next tasks
+  async generateSmartNextTasks(projectConfig, learningHistory, completedTaskIds) {
+    // Generate continuation tasks based on learning history
+    const newTasks = [];
+    const recentTopics = learningHistory.completed_topics.slice(-3);
+    
+    if (recentTopics.length > 0) {
+      const lastTopic = recentTopics[recentTopics.length - 1];
+      newTasks.push({
+        id: this.generateId(),
+        title: `Build on: ${lastTopic.topic}`,
+        description: `Continue developing skills from ${lastTopic.topic}`,
+        branch_type: 'continuation',
+        estimated_time: '30 minutes',
+        priority: 'high',
+        status: 'ready',
+        knowledge_level: 'intermediate',
+        magnitude: 5,
+        prerequisites: [],
+        learning_outcomes: ['Deepen understanding', 'Apply knowledge', 'Build confidence']
+      });
+    }
+    
+    return newTasks;
   }
 
   async evolveStrategy(feedback = '') {
@@ -3246,6 +4246,74 @@ class ForestServer {
       // Keep the task unless it's been invalidated
       return !(skillBasedInvalidation || resultBasedInvalidation || pathBasedInvalidation);
     });
+  }
+
+  // --- Fix #3: Add Smart Goal Detection Helper Function (around line 400) ---
+  detectGoalDomain(goal) {
+    const prompt = `You are an expert career and learning strategist. Given the user goal: "${goal}", classify the broad domain (one or two words like "music", "health", "robotics", etc.) and list: 4 urgent skills, 3 plausible career paths, and an estimated time range to employability. Return strictly as JSON with keys domain, urgentSkills, careerPaths, timeToEmployability.`;
+    try {
+      const result = this.callClaude(prompt, 'json'); // synchronous hand-off in MCP runtime
+      const data = typeof result === 'string' ? JSON.parse(result) : result;
+      if (data && data.domain) {
+        return {
+          domain: data.domain,
+          urgentSkills: data.urgentSkills || [],
+          careerPaths: data.careerPaths || [],
+          timeToEmployability: data.timeToEmployability || 'unknown'
+        };
+      }
+      throw new Error('Malformed Claude response');
+    } catch (err) {
+      console.error('detectGoalDomain fallback:', err.message);
+      // Generic fallback (domain-agnostic)
+      return {
+        domain: 'general',
+        urgentSkills: ['Research', 'Planning', 'Execution', 'Feedback'],
+        careerPaths: ['Goal-specific roles'],
+        timeToEmployability: 'variable'
+      };
+    }
+  }
+
+  /* ------------------------------------------------------------------
+   * LLM Integration Helpers (Claude)
+   * These provide a single point for making requests to Claude and
+   * parsing responses. They can be swapped out when you connect to
+   * the real Memory-MCP / Anthropic endpoint.
+   * ------------------------------------------------------------------ */
+  async callClaude(prompt, responseType = 'json') {
+    /*
+      Placeholder implementation.
+      Replace with your actual call to Memory-MCP or Anthropic.
+      Expected to return either a JSON string or already-parsed object
+      depending on your API wrapper.
+    */
+    console.warn('[callClaude] No Claude backend configured. Falling back.');
+    throw new Error('Claude backend not configured');
+  }
+
+  async callClaudeForBranches(prompt) {
+    try {
+      const raw = await this.callClaude(prompt, 'json');
+      const data = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (Array.isArray(data)) {return data;}
+      throw new Error('Claude returned non-array for branches');
+    } catch (err) {
+      console.error('Claude branch generation error:', err.message);
+      throw err; // Upstream catch will trigger fallback
+    }
+  }
+
+  async callClaudeForNodes(prompt) {
+    try {
+      const raw = await this.callClaude(prompt, 'json');
+      const data = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (Array.isArray(data)) {return data;}
+      throw new Error('Claude returned non-array for nodes');
+    } catch (err) {
+      console.error('Claude node generation error:', err.message);
+      throw err; // Upstream catch will trigger fallback
+    }
   }
 }
 
