@@ -12,10 +12,13 @@ import fs from 'fs/promises';
 import path from 'path';
 // import { fileURLToPath } from 'url'; // Reserved for future use
 import os from 'os';
+import http from 'http';
 
 // Resolve directory of this file and set repository root (one level up from forest-server)
 // const __filename = fileURLToPath(import.meta.url); // Reserved for future use
 // const __dirname = path.dirname(__filename); // Reserved for future use
+
+const ENABLE_HTTP_API = true; // Set to false to disable HTTP API
 
 class ForestServer {
   constructor() {
@@ -38,484 +41,500 @@ class ForestServer {
       : path.join(os.homedir(), '.forest-data');
     this.activeProject = null;
     this.setupHandlers();
+    // Lightweight ClaudeInterface wrapper for contextual intelligence requests
+    this.claudeInterface = {
+      requestIntelligence: async (type, payload) => ({
+        request_for_claude: { type, payload }
+      })
+    };
   }
 
   setupHandlers() {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
-      return {
-        tools: [
-          {
-            name: 'create_project',
-            description: 'Create comprehensive life orchestration project with detailed personal context',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                project_id: {
-                  type: 'string',
-                  description: 'Unique project identifier (e.g. "dream_project_alpha")'
-                },
-                goal: {
-                  type: 'string',
-                  description: 'Ultimate ambitious goal (what you want to achieve)'
-                },
-                specific_interests: {
-                  type: 'array',
-                  items: { type: 'string' },
-                  description: 'Optional: Specific things you want to be able to do (e.g. "play Let It Be on piano", "build a personal website"). Leave empty if you\'re not sure yet - the system will help you discover interests.'
-                },
-                learning_paths: {
-                  type: 'array',
-                  items: {
-                    type: 'object',
-                    properties: {
-                      path_name: { type: 'string', description: 'Name of the learning path (e.g. "saxophone", "piano", "theory")' },
-                      interests: { type: 'array', items: { type: 'string' }, description: 'Specific interests for this path' },
-                      priority: { type: 'string', enum: ['high', 'medium', 'low'], description: 'Relative priority of this path' }
-                    },
-                    required: ['path_name']
-                  },
-                  description: 'Optional: Define separate learning paths within your goal for isolated focus (e.g. separate piano and saxophone paths)'
-                },
-                context: {
-                  type: 'string',
-                  description: 'Current life situation and why this goal matters now'
-                },
-                constraints: {
+      // Define the full list once so we can also publish it through the initial
+      // MCP capabilities handshake (Cursor shows 0 tools if we don't do this).
+      const toolDefs = [
+        {
+          name: 'create_project',
+          description: 'Create comprehensive life orchestration project with detailed personal context',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              project_id: {
+                type: 'string',
+                description: 'Unique project identifier (e.g. "dream_project_alpha")'
+              },
+              goal: {
+                type: 'string',
+                description: 'Ultimate ambitious goal (what you want to achieve)'
+              },
+              specific_interests: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Optional: Specific things you want to be able to do (e.g. "play Let It Be on piano", "build a personal website"). Leave empty if you\'re not sure yet - the system will help you discover interests.'
+              },
+              learning_paths: {
+                type: 'array',
+                items: {
                   type: 'object',
                   properties: {
-                    time_constraints: {
-                      type: 'string',
-                      description: 'Available time slots, busy periods, commitments'
-                    },
-                    energy_patterns: {
-                      type: 'string',
-                      description: 'When you have high/low energy, physical limitations'
-                    },
-                    focus_variability: {
-                      type: 'string',
-                      description: 'How your focus and attention vary (e.g. "consistent daily", "varies with interest", "unpredictable energy levels")'
-                    },
-                    financial_constraints: {
-                      type: 'string',
-                      description: 'Budget limitations affecting learning resources'
-                    },
-                    location_constraints: {
-                      type: 'string',
-                      description: 'Home setup, workspace limitations, travel requirements'
-                    }
-                  }
-                },
-                existing_credentials: {
-                  type: 'array',
-                  items: {
-                    type: 'object',
-                    properties: {
-                      credential_type: { type: 'string', description: 'Degree, certificate, course, etc.' },
-                      subject_area: { type: 'string', description: 'What field/subject' },
-                      level: { type: 'string', description: 'Beginner, intermediate, advanced, expert' },
-                      relevance_to_goal: { type: 'string', description: 'How this relates to your new goal' }
-                    }
+                    path_name: { type: 'string', description: 'Name of the learning path (e.g. "saxophone", "piano", "theory")' },
+                    interests: { type: 'array', items: { type: 'string' }, description: 'Specific interests for this path' },
+                    priority: { type: 'string', enum: ['high', 'medium', 'low'], description: 'Relative priority of this path' }
                   },
-                  description: 'All existing education, certificates, and relevant experience'
+                  required: ['path_name']
                 },
-                current_habits: {
+                description: 'Optional: Define separate learning paths within your goal for isolated focus (e.g. separate piano and saxophone paths)'
+              },
+              context: {
+                type: 'string',
+                description: 'Current life situation and why this goal matters now'
+              },
+              constraints: {
+                type: 'object',
+                properties: {
+                  time_constraints: {
+                    type: 'string',
+                    description: 'Available time slots, busy periods, commitments'
+                  },
+                  energy_patterns: {
+                    type: 'string',
+                    description: 'When you have high/low energy, physical limitations'
+                  },
+                  focus_variability: {
+                    type: 'string',
+                    description: 'How your focus and attention vary (e.g. "consistent daily", "varies with interest", "unpredictable energy levels")'
+                  },
+                  financial_constraints: {
+                    type: 'string',
+                    description: 'Budget limitations affecting learning resources'
+                  },
+                  location_constraints: {
+                    type: 'string',
+                    description: 'Home setup, workspace limitations, travel requirements'
+                  }
+                }
+              },
+              existing_credentials: {
+                type: 'array',
+                items: {
                   type: 'object',
                   properties: {
-                    good_habits: {
-                      type: 'array',
-                      items: { type: 'string' },
-                      description: 'Existing positive habits to maintain/build on'
-                    },
-                    bad_habits: {
-                      type: 'array',
-                      items: { type: 'string' },
-                      description: 'Habits you want to replace or minimize'
-                    },
-                    habit_goals: {
-                      type: 'array',
-                      items: { type: 'string' },
-                      description: 'New habits you want to build alongside learning'
-                    }
+                    credential_type: { type: 'string', description: 'Degree, certificate, course, etc.' },
+                    subject_area: { type: 'string', description: 'What field/subject' },
+                    level: { type: 'string', description: 'Beginner, intermediate, advanced, expert' },
+                    relevance_to_goal: { type: 'string', description: 'How this relates to your new goal' }
                   }
                 },
-                life_structure_preferences: {
-                  type: 'object',
-                  properties: {
-                    wake_time: { type: 'string', description: 'Preferred wake time (e.g. "6:00 AM")' },
-                    sleep_time: { type: 'string', description: 'Preferred sleep time (e.g. "10:30 PM")' },
-                    meal_times: { type: 'array', items: { type: 'string' }, description: 'Preferred meal schedule' },
-                    break_preferences: { type: 'string', description: 'How often and what type of breaks you need' },
-                    focus_duration: { type: 'string', description: 'Preferred focus session length (e.g. "25 minutes", "2 hours", "until natural break", "flexible", "variable")' },
-                    transition_time: { type: 'string', description: 'Time needed between activities' }
-                  }
-                },
-                urgency_level: {
-                  type: 'string',
-                  enum: ['low', 'medium', 'high', 'critical'],
-                  description: 'How urgently you need to achieve this goal'
-                },
-                success_metrics: {
-                  type: 'array',
-                  items: { type: 'string' },
-                  description: 'How you will measure success (income, job offers, portfolio pieces, etc.)'
-                }
+                description: 'All existing education, certificates, and relevant experience'
               },
-              required: ['project_id', 'goal', 'life_structure_preferences']
-            }
-          },
-          {
-            name: 'switch_project',
-            description: 'Switch to a different project workspace',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                project_id: {
-                  type: 'string',
-                  description: 'Project to switch to'
-                }
-              },
-              required: ['project_id']
-            }
-          },
-          {
-            name: 'list_projects',
-            description: 'Show all project workspaces',
-            inputSchema: {
-              type: 'object',
-              properties: {}
-            }
-          },
-          {
-            name: 'get_active_project',
-            description: 'Show current active project',
-            inputSchema: {
-              type: 'object',
-              properties: {}
-            }
-          },
-          {
-            name: 'build_hta_tree',
-            description: 'Build strategic HTA framework for a specific learning path',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                path_name: {
-                  type: 'string',
-                  description: 'Learning path to build HTA tree for (e.g. "saxophone", "piano"). If not specified, builds for active path or general project.'
-                },
-                learning_style: {
-                  type: 'string',
-                  description: 'Preferred learning approach (visual, hands-on, research-based, etc.)'
-                },
-                focus_areas: {
-                  type: 'array',
-                  items: { type: 'string' },
-                  description: 'Specific areas to prioritize in the strategy'
-                }
-              }
-            }
-          },
-          {
-            name: 'get_hta_status',
-            description: 'View HTA strategic framework for active project',
-            inputSchema: {
-              type: 'object',
-              properties: {}
-            }
-          },
-          {
-            name: 'generate_daily_schedule',
-            description: 'ON-DEMAND: Generate comprehensive gap-free daily schedule when requested by user',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                date: {
-                  type: 'string',
-                  description: 'YYYY-MM-DD, defaults to today'
-                },
-                energy_level: {
-                  type: 'number',
-                  minimum: 1,
-                  maximum: 5,
-                  description: 'Current energy level (affects task difficulty and timing)'
-                },
-                available_hours: {
-                  type: 'string',
-                  description: 'Comma-separated list of hours to prioritize (e.g. "9,10,11,14,15")'
-                },
-                focus_type: {
-                  type: 'string',
-                  enum: ['learning', 'building', 'networking', 'habits', 'mixed'],
-                  description: 'Type of work to prioritize today'
-                },
-                schedule_request_context: {
-                  type: 'string',
-                  description: 'User context about why they need a schedule now (e.g. "planning tomorrow", "need structure today")'
-                }
-              }
-            }
-          },
-          {
-            name: 'complete_block',
-            description: 'Complete time block and capture insights for active project',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                block_id: {
-                  type: 'string'
-                },
-                outcome: {
-                  type: 'string',
-                  description: 'What happened? Key insights?'
-                },
-                learned: {
-                  type: 'string',
-                  description: 'What specific knowledge or skills did you gain?'
-                },
-                next_questions: {
-                  type: 'string',
-                  description: 'What questions emerged? What do you need to learn next?'
-                },
-                energy_level: {
-                  type: 'number',
-                  minimum: 1,
-                  maximum: 5,
-                  description: 'Energy after completion'
-                },
-                difficulty_rating: {
-                  type: 'number',
-                  minimum: 1,
-                  maximum: 5,
-                  description: 'How difficult was this task? (1=too easy, 5=too hard)'
-                },
-                breakthrough: {
-                  type: 'boolean',
-                  description: 'Major insight or breakthrough?'
-                }
-              },
-              required: ['block_id', 'outcome', 'energy_level']
-            }
-          },
-          {
-            name: 'complete_with_opportunities',
-            description: 'Complete time block with rich context capture for impossible dream orchestration - use when significant breakthroughs, unexpected results, or external opportunities emerge',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                block_id: {
-                  type: 'string',
-                  description: 'The block being completed'
-                },
-                outcome: {
-                  type: 'string',
-                  description: 'What happened? Key insights?'
-                },
-                learned: {
-                  type: 'string',
-                  description: 'What specific knowledge or skills did you gain?'
-                },
-                energy_level: {
-                  type: 'number',
-                  minimum: 1,
-                  maximum: 5,
-                  description: 'Energy after completion'
-                },
-                engagement_level: {
-                  type: 'number',
-                  minimum: 1,
-                  maximum: 10,
-                  description: 'How deeply engaged were you? (10 = totally absorbed, lost track of time)'
-                },
-                unexpected_results: {
-                  type: 'array',
-                  items: { type: 'string' },
-                  description: 'What unexpected things happened or were discovered?'
-                },
-                new_skills_revealed: {
-                  type: 'array', 
-                  items: { type: 'string' },
-                  description: 'What hidden talents or natural abilities did this reveal?'
-                },
-                external_feedback: {
-                  type: 'array',
-                  items: {
-                    type: 'object',
-                    properties: {
-                      source: { type: 'string', description: 'Who gave feedback' },
-                      content: { type: 'string', description: 'What they said' },
-                      sentiment: { type: 'string', enum: ['positive', 'negative', 'neutral'] }
-                    }
+              current_habits: {
+                type: 'object',
+                properties: {
+                  good_habits: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description: 'Existing positive habits to maintain/build on'
                   },
-                  description: 'Any feedback from others about your work'
-                },
-                social_reactions: {
-                  type: 'array',
-                  items: { type: 'string' },
-                  description: 'Social media reactions, shares, comments, viral moments'
-                },
-                viral_potential: {
-                  type: 'boolean',
-                  description: 'Does this work have viral potential or unusual appeal?'
-                },
-                industry_connections: {
-                  type: 'array',
-                  items: { type: 'string' },
-                  description: 'Any industry professionals who showed interest or made contact'
-                },
-                serendipitous_events: {
-                  type: 'array',
-                  items: { type: 'string' },
-                  description: 'Lucky coincidences, chance meetings, unexpected opportunities'
+                  bad_habits: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description: 'Habits you want to replace or minimize'
+                  },
+                  habit_goals: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description: 'New habits you want to build alongside learning'
+                  }
                 }
               },
-              required: ['block_id', 'outcome', 'energy_level', 'engagement_level']
-            }
-          },
-          {
-            name: 'current_status',
-            description: 'Show todays progress and next action for active project',
-            inputSchema: {
-              type: 'object',
-              properties: {}
-            }
-          },
-          {
-            name: 'evolve_strategy',
-            description: 'Analyze patterns and evolve the approach for active project',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                feedback: {
-                  type: 'string',
-                  description: 'What\'s working? What\'s not? What needs to change?'
-                }
-              }
-            }
-          },
-          {
-            name: 'generate_tiimo_export',
-            description: 'Export today\'s schedule as Tiimo-compatible markdown',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                include_breaks: {
-                  type: 'boolean',
-                  default: true,
-                  description: 'Include break blocks between tasks'
-                }
-              }
-            }
-          },
-          {
-            name: 'analyze_performance',
-            description: 'Analyze historical data to discover your personal productivity patterns.',
-            inputSchema: { type: 'object', properties: {} }
-          },
-          {
-            name: 'review_week',
-            description: 'Summarize the last 7 days of progress, breakthroughs, and challenges.',
-            inputSchema: { type: 'object', properties: {} }
-          },
-          {
-            name: 'review_month',
-            description: 'Provide a high-level monthly report of your progress towards the North Star.',
-            inputSchema: { type: 'object', properties: {} }
-          },
-          {
-            name: 'get_next_task',
-            description: 'Get the single most logical next task based on current progress and context',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                context_from_memory: {
-                  type: 'string',
-                  description: 'Optional context retrieved from Memory MCP about recent progress/insights'
-                },
-                energy_level: {
-                  type: 'number',
-                  minimum: 1,
-                  maximum: 5,
-                  description: 'Current energy level to match appropriate task difficulty'
-                },
-                time_available: {
-                  type: 'string',
-                  description: 'Time available for the task (e.g. "30 minutes", "1 hour")'
-                }
-              }
-            }
-          },
-          {
-            name: 'sync_forest_memory',
-            description: 'Sync current Forest state to memory for context awareness',
-            inputSchema: { type: 'object', properties: {} }
-          },
-          {
-            name: 'debug_task_sequence',
-            description: 'Debug task sequencing issues - shows prerequisite chains and task states',
-            inputSchema: { type: 'object', properties: {} }
-          },
-          {
-            name: 'repair_sequence',
-            description: 'Fix broken task sequencing by rebuilding the frontier with proper dependencies',
-            inputSchema: { 
-              type: 'object', 
-              properties: {
-                force_rebuild: {
-                  type: 'boolean',
-                  description: 'Completely rebuild the task sequence from scratch'
-                }
-              }
-            }
-          },
-          {
-            name: 'focus_learning_path',
-            description: 'Set focus to a specific learning path within the project (e.g. "saxophone", "piano", "theory")',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                path_name: {
-                  type: 'string',
-                  description: 'Name of the learning path to focus on (e.g. "saxophone", "piano", "web development")'
-                },
-                duration: {
-                  type: 'string',
-                  description: 'How long to focus on this path (e.g. "today", "this week", "until next switch")'
+              life_structure_preferences: {
+                type: 'object',
+                properties: {
+                  wake_time: { type: 'string', description: 'Preferred wake time (e.g. "6:00 AM")' },
+                  sleep_time: { type: 'string', description: 'Preferred sleep time (e.g. "10:30 PM")' },
+                  meal_times: { type: 'array', items: { type: 'string' }, description: 'Preferred meal schedule' },
+                  break_preferences: { type: 'string', description: 'How often and what type of breaks you need' },
+                  focus_duration: { type: 'string', description: 'Preferred focus session length (e.g. "25 minutes", "2 hours", "until natural break", "flexible", "variable")' },
+                  transition_time: { type: 'string', description: 'Time needed between activities' }
                 }
               },
-              required: ['path_name']
-            }
-          },
-          {
-            name: 'analyze_complexity_evolution',
-            description: 'Analyze the current complexity tier and scaling opportunities for infinite growth potential',
-            inputSchema: { type: 'object', properties: {} }
-          },
-          {
-            name: 'analyze_identity_transformation',
-            description: 'Analyze current identity and generate micro-shifts toward target professional identity',
-            inputSchema: { type: 'object', properties: {} }
-          },
-          {
-            name: 'list_learning_paths',
-            description: 'Show all available learning paths in the current project',
-            inputSchema: { type: 'object', properties: {} }
-          },
-          {
-            name: 'analyze_reasoning',
-            description: 'Generate logical deductions and strategic insights from completion patterns',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                include_detailed_analysis: {
-                  type: 'boolean',
-                  default: true,
-                  description: 'Include detailed logical chains and pattern analysis'
-                }
+              urgency_level: {
+                type: 'string',
+                enum: ['low', 'medium', 'high', 'critical'],
+                description: 'How urgently you need to achieve this goal'
+              },
+              success_metrics: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'How you will measure success (income, job offers, portfolio pieces, etc.)'
+              }
+            },
+            required: ['project_id', 'goal', 'life_structure_preferences']
+          }
+        },
+        {
+          name: 'switch_project',
+          description: 'Switch to a different project workspace',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              project_id: {
+                type: 'string',
+                description: 'Project to switch to'
+              }
+            },
+            required: ['project_id']
+          }
+        },
+        {
+          name: 'list_projects',
+          description: 'Show all project workspaces',
+          inputSchema: {
+            type: 'object',
+            properties: {}
+          }
+        },
+        {
+          name: 'get_active_project',
+          description: 'Show current active project',
+          inputSchema: {
+            type: 'object',
+            properties: {}
+          }
+        },
+        {
+          name: 'build_hta_tree',
+          description: 'Build strategic HTA framework for a specific learning path',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              path_name: {
+                type: 'string',
+                description: 'Learning path to build HTA tree for (e.g. "saxophone", "piano"). If not specified, builds for active path or general project.'
+              },
+              learning_style: {
+                type: 'string',
+                description: 'Preferred learning approach (visual, hands-on, research-based, etc.)'
+              },
+              focus_areas: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Specific areas to prioritize in the strategy'
               }
             }
           }
-        ]
-      };
+        },
+        {
+          name: 'get_hta_status',
+          description: 'View HTA strategic framework for active project',
+          inputSchema: {
+            type: 'object',
+            properties: {}
+          }
+        },
+        {
+          name: 'generate_daily_schedule',
+          description: 'ON-DEMAND: Generate comprehensive gap-free daily schedule when requested by user',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              date: {
+                type: 'string',
+                description: 'YYYY-MM-DD, defaults to today'
+              },
+              energy_level: {
+                type: 'number',
+                minimum: 1,
+                maximum: 5,
+                description: 'Current energy level (affects task difficulty and timing)'
+              },
+              available_hours: {
+                type: 'string',
+                description: 'Comma-separated list of hours to prioritize (e.g. "9,10,11,14,15")'
+              },
+              focus_type: {
+                type: 'string',
+                enum: ['learning', 'building', 'networking', 'habits', 'mixed'],
+                description: 'Type of work to prioritize today'
+              },
+              schedule_request_context: {
+                type: 'string',
+                description: 'User context about why they need a schedule now (e.g. "planning tomorrow", "need structure today")'
+              }
+            }
+          }
+        },
+        {
+          name: 'complete_block',
+          description: 'Complete time block and capture insights for active project',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              block_id: {
+                type: 'string'
+              },
+              outcome: {
+                type: 'string',
+                description: 'What happened? Key insights?'
+              },
+              learned: {
+                type: 'string',
+                description: 'What specific knowledge or skills did you gain?'
+              },
+              next_questions: {
+                type: 'string',
+                description: 'What questions emerged? What do you need to learn next?'
+              },
+              energy_level: {
+                type: 'number',
+                minimum: 1,
+                maximum: 5,
+                description: 'Energy after completion'
+              },
+              difficulty_rating: {
+                type: 'number',
+                minimum: 1,
+                maximum: 5,
+                description: 'How difficult was this task? (1=too easy, 5=too hard)'
+              },
+              breakthrough: {
+                type: 'boolean',
+                description: 'Major insight or breakthrough?'
+              }
+            },
+            required: ['block_id', 'outcome', 'energy_level']
+          }
+        },
+        {
+          name: 'complete_with_opportunities',
+          description: 'Complete time block with rich context capture for impossible dream orchestration - use when significant breakthroughs, unexpected results, or external opportunities emerge',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              block_id: {
+                type: 'string',
+                description: 'The block being completed'
+              },
+              outcome: {
+                type: 'string',
+                description: 'What happened? Key insights?'
+              },
+              learned: {
+                type: 'string',
+                description: 'What specific knowledge or skills did you gain?'
+              },
+              energy_level: {
+                type: 'number',
+                minimum: 1,
+                maximum: 5,
+                description: 'Energy after completion'
+              },
+              engagement_level: {
+                type: 'number',
+                minimum: 1,
+                maximum: 10,
+                description: 'How deeply engaged were you? (10 = totally absorbed, lost track of time)'
+              },
+              unexpected_results: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'What unexpected things happened or were discovered?'
+              },
+              new_skills_revealed: {
+                type: 'array', 
+                items: { type: 'string' },
+                description: 'What hidden talents or natural abilities did this reveal?'
+              },
+              external_feedback: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    source: { type: 'string', description: 'Who gave feedback' },
+                    content: { type: 'string', description: 'What they said' },
+                    sentiment: { type: 'string', enum: ['positive', 'negative', 'neutral'] }
+                  }
+                },
+                description: 'Any feedback from others about your work'
+              },
+              social_reactions: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Social media reactions, shares, comments, viral moments'
+              },
+              viral_potential: {
+                type: 'boolean',
+                description: 'Does this work have viral potential or unusual appeal?'
+              },
+              industry_connections: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Any industry professionals who showed interest or made contact'
+              },
+              serendipitous_events: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Lucky coincidences, chance meetings, unexpected opportunities'
+              }
+            },
+            required: ['block_id', 'outcome', 'energy_level', 'engagement_level']
+          }
+        },
+        {
+          name: 'current_status',
+          description: 'Show todays progress and next action for active project',
+          inputSchema: {
+            type: 'object',
+            properties: {}
+          }
+        },
+        {
+          name: 'evolve_strategy',
+          description: 'Analyze patterns and evolve the approach for active project',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              feedback: {
+                type: 'string',
+                description: 'What\'s working? What\'s not? What needs to change?'
+              }
+            }
+          }
+        },
+        {
+          name: 'generate_tiimo_export',
+          description: 'Export today\'s schedule as Tiimo-compatible markdown',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              include_breaks: {
+                type: 'boolean',
+                default: true,
+                description: 'Include break blocks between tasks'
+              }
+            }
+          }
+        },
+        {
+          name: 'analyze_performance',
+          description: 'Analyze historical data to discover your personal productivity patterns.',
+          inputSchema: { type: 'object', properties: {} }
+        },
+        {
+          name: 'review_week',
+          description: 'Summarize the last 7 days of progress, breakthroughs, and challenges.',
+          inputSchema: { type: 'object', properties: {} }
+        },
+        {
+          name: 'review_month',
+          description: 'Provide a high-level monthly report of your progress towards the North Star.',
+          inputSchema: { type: 'object', properties: {} }
+        },
+        {
+          name: 'get_next_task',
+          description: 'Get the single most logical next task based on current progress and context',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              context_from_memory: {
+                type: 'string',
+                description: 'Optional context retrieved from Memory MCP about recent progress/insights'
+              },
+              energy_level: {
+                type: 'number',
+                minimum: 1,
+                maximum: 5,
+                description: 'Current energy level to match appropriate task difficulty'
+              },
+              time_available: {
+                type: 'string',
+                description: 'Time available for the task (e.g. "30 minutes", "1 hour")'
+              }
+            }
+          }
+        },
+        {
+          name: 'sync_forest_memory',
+          description: 'Sync current Forest state to memory for context awareness',
+          inputSchema: { type: 'object', properties: {} }
+        },
+        {
+          name: 'debug_task_sequence',
+          description: 'Debug task sequencing issues - shows prerequisite chains and task states',
+          inputSchema: { type: 'object', properties: {} }
+        },
+        {
+          name: 'repair_sequence',
+          description: 'Fix broken task sequencing by rebuilding the frontier with proper dependencies',
+          inputSchema: { 
+            type: 'object', 
+            properties: {
+              force_rebuild: {
+                type: 'boolean',
+                description: 'Completely rebuild the task sequence from scratch'
+              }
+            }
+          }
+        },
+        {
+          name: 'focus_learning_path',
+          description: 'Set focus to a specific learning path within the project (e.g. "saxophone", "piano", "theory")',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              path_name: {
+                type: 'string',
+                description: 'Name of the learning path to focus on (e.g. "saxophone", "piano", "web development")'
+              },
+              duration: {
+                type: 'string',
+                description: 'How long to focus on this path (e.g. "today", "this week", "until next switch")'
+              }
+            },
+            required: ['path_name']
+          }
+        },
+        {
+          name: 'analyze_complexity_evolution',
+          description: 'Analyze the current complexity tier and scaling opportunities for infinite growth potential',
+          inputSchema: { type: 'object', properties: {} }
+        },
+        {
+          name: 'analyze_identity_transformation',
+          description: 'Analyze current identity and generate micro-shifts toward target professional identity',
+          inputSchema: { type: 'object', properties: {} }
+        },
+        {
+          name: 'list_learning_paths',
+          description: 'Show all available learning paths in the current project',
+          inputSchema: { type: 'object', properties: {} }
+        },
+        {
+          name: 'analyze_reasoning',
+          description: 'Generate logical deductions and strategic insights from completion patterns',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              include_detailed_analysis: {
+                type: 'boolean',
+                default: true,
+                description: 'Include detailed logical chains and pattern analysis'
+              }
+            }
+          }
+        }
+      ];
+
+      // Expose tools in the handshake exactly once (before the transport
+      // connects, constructor already ran `setupHandlers`).
+      if (Object.keys(this.server.capabilities.tools).length === 0) {
+        this.server.capabilities.tools = Object.fromEntries(
+          toolDefs.map(t => [t.name, t])
+        );
+      }
+
+      return { tools: toolDefs };
     });
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -1278,109 +1297,20 @@ class ForestServer {
     return universalBranches;
   }
 
-  generateSequencedFrontierNodes(projectConfig, learningHistory) {
-    // Universal task generation - works for ANY goal
+  async generateSequencedFrontierNodes(projectConfig, learningHistory) {
+    // Compose a prompt for the LLM
     const goal = projectConfig.goal;
     const context = projectConfig.context || '';
-    const focusDuration = projectConfig.focus_duration || 'flexible';
     const credentials = projectConfig.existing_credentials || [];
     const completedTopics = learningHistory.completed_topics?.map(t => t.topic) || [];
-    
-    // Generate time estimates based on focus preference
-    const getTimeEstimate = (complexity = 'medium') => {
-      if (focusDuration.includes('flexible') || focusDuration.includes('natural')) {
-        return 'As long as needed';
-      }
-      if (focusDuration.includes('25') || focusDuration.includes('pomodoro')) {
-        return complexity === 'simple' ? '25 minutes' : '50 minutes';
-      }
-      if (focusDuration.includes('hour')) {
-        return complexity === 'simple' ? '45 minutes' : '90 minutes';
-      }
-      return '30 minutes'; // sensible default
-    };
-    
-    const universalNodes = [];
-    
-    // Node 1: Vision/Success Definition - universal first step
-    universalNodes.push({
-      id: this.generateId(),
-      title: `Envision Success: ${goal}`,
-      description: `Define what achieving \"${goal}\" would look and feel like specifically for you`,
-      branch_type: 'vision',
-      estimated_time: getTimeEstimate('simple'),
-      priority: 'critical',
-      status: 'ready',
-      knowledge_level: 'beginner',
-      magnitude: 4,
-      prerequisites: [],
-      learning_outcomes: [`Clear vision of ${goal}`, 'Motivation and direction', 'Success criteria']
-    });
-    
-    // Node 2: Landscape Survey - universal exploration
-    universalNodes.push({
-      id: this.generateId(),
-      title: `Survey the Landscape: ${goal}`,
-      description: `Research and explore what's involved in ${goal} - discover possibilities and paths`,
-      branch_type: 'exploration', 
-      estimated_time: getTimeEstimate('medium'),
-      priority: 'high',
-      status: 'ready',
-      knowledge_level: 'beginner',
-      magnitude: 5,
-      prerequisites: [],
-      learning_outcomes: [`Understanding of ${goal} landscape`, 'Identify interesting areas', 'Discover entry points']
-    });
-    
-    // Node 3: First Practical Step - always valuable
-    universalNodes.push({
-      id: this.generateId(),
-      title: `Take First Action: ${goal}`,
-      description: `Take a small, concrete first step toward ${goal} - focus on momentum over perfection`,
-      branch_type: 'action',
-      estimated_time: getTimeEstimate('medium'),
-      priority: 'high', 
-      status: 'ready',
-      knowledge_level: 'beginner',
-      magnitude: 6,
-      prerequisites: [],
-      learning_outcomes: ['Momentum and confidence', 'Real-world experience', 'Learning from doing']
-    });
-    
-    // Node 4: Leverage Existing Knowledge (if credentials exist)
-    if (credentials.length > 0) {
-      const relevantCred = credentials[0]; // Use first credential
-      universalNodes.push({
-        id: this.generateId(),
-        title: `Connect ${relevantCred.subject_area} to ${goal.split(' ').slice(0, 2).join(' ')}`,
-        description: `Explore how your ${relevantCred.subject_area} background can accelerate your progress toward ${goal}`,
-        branch_type: 'leverage_existing',
-        estimated_time: getTimeEstimate('simple'),
-        priority: 'medium',
-        status: 'ready',
-        knowledge_level: 'intermediate',
-        magnitude: 5,
-        prerequisites: [],
-        learning_outcomes: [`Bridge ${relevantCred.subject_area} to ${goal}`, 'Accelerated learning path', 'Unique advantage identification']
-      });
-    }
-    
-    // Node 5: Reflection and Adjustment - always valuable after initial action
-    universalNodes.push({
-      id: this.generateId(),
-      title: `Reflect and Refine: ${goal} Approach`,
-      description: `Reflect on your initial progress toward ${goal} and refine your approach based on what you've learned`,
-      branch_type: 'reflection',
-      estimated_time: getTimeEstimate('simple'),
-      priority: 'medium',
-      status: 'future', // Don't do immediately
-      knowledge_level: 'beginner', 
-      magnitude: 4,
-      prerequisites: [],
-      learning_outcomes: ['Self-awareness', 'Strategy optimization', 'Course correction']
-    });
-    
-    return universalNodes;
+    const focusDuration = projectConfig.focus_duration || 'flexible';
+
+    const prompt = `You are an expert in learning design and task analysis. Given the following user context, generate a sequenced list of actionable learning nodes (tasks) to achieve the goal. Each node should have a title, description, branch_type, estimated_time, priority, status, knowledge_level, prerequisites (array), and learning_outcomes (array). Do not use templates or generic steps—make each node specific to the user's goal and background.\n\nGoal: ${goal}\nContext: ${context}\nCredentials: ${JSON.stringify(credentials)}\nCompleted Topics: ${JSON.stringify(completedTopics)}\nFocus Duration: ${focusDuration}`;
+
+    let nodes = await this.callClaudeForNodes(prompt);
+    // Assign unique IDs to each node
+    nodes = nodes.map(node => ({ ...node, id: this.generateId() }));
+    return nodes;
   }
 
   generatePathSpecificBranches(pathName, pathConfig, projectConfig, learningHistory, focusAreas) {
@@ -2401,20 +2331,29 @@ class ForestServer {
       await this.saveProjectData(projectId, `day_${today}.json`, schedule);
     }
 
+    // ----- EVOLVED TASK INTELLIGENCE INTEGRATION -----
+    const progressSnapshot = {
+      completed_tasks: learningHistory.completed_topics.length,
+      knowledge_level: projectConfig.knowledge_level || 0,
+      momentum_status: pacingContext.momentum_status?.status || 'unknown'
+    };
+
+    const isEvolvedTask = nextTask?.prerequisites?.length > 0 && nextTask.branch_type === 'evolved';
+
+    const guidanceRequest = isEvolvedTask
+      ? await this.claudeInterface.requestIntelligence('next_task', {
+          current_task: nextTask,
+          user_progress: progressSnapshot,
+          energy_level: energyLevel,
+          time_available: timeAvailable
+        })
+      : null;
+
     return {
-      content: [{
-        type: 'text',
-        text: `🎯 Next Perfectly Paced Task: "${nextTask.title}"
-
-📊 Pacing Analysis:
-• Current Capability: ${pacingContext.current_capability.level} (${pacingContext.current_capability.confidence} confidence)
-• Recommended Step: ${pacingContext.recommended_step_size.size} (${pacingContext.recommended_step_size.reasoning})
-• Momentum: ${pacingContext.momentum_status?.status || 'building'}
-${pacingContext.pacing_warnings.length > 0 ? `
-⚠️ Pacing Alerts: ${pacingContext.pacing_warnings.map(w => w.message).join(', ')}` : ''}
-
-🧠 Enhanced Memory Context: ${JSON.stringify(memoryContext)}`
-      }]
+      task: nextTask,
+      auto_triggered: isEvolvedTask,
+      intelligent_guidance_request: guidanceRequest,
+      reasoning: nextTask?.reasoning || 'Next logical step'
     };
   }
   
@@ -5105,3 +5044,47 @@ if (process.argv[1] && process.argv[1].includes('server.js') && !process.env.NOD
     await server.server.connect(transport);
   })();
 }
+
+if (ENABLE_HTTP_API && import.meta.url === `file://${process.argv[1]}`) {
+  const serverInstance = new ForestServer();
+  const httpServer = http.createServer(async (req, res) => {
+    if (req.method === 'POST' && req.url === '/tool') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', async () => {
+        try {
+          const { tool, args } = JSON.parse(body);
+          let result;
+          switch (tool) {
+            case 'create_project':
+              result = await serverInstance.createProject(args);
+              break;
+            case 'build_hta_tree':
+              result = await serverInstance.buildHTATree(args.path_name, args.learning_style || 'mixed', args.focus_areas || []);
+              break;
+            case 'get_hta_status':
+              result = await serverInstance.getHTAStatus();
+              break;
+            default:
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Unknown tool' }));
+              return;
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+    } else {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Not found' }));
+    }
+  });
+  httpServer.listen(3000, () => {
+    console.log('ForestServer HTTP API listening on port 3000');
+  });
+}
+
+export { ForestServer };
